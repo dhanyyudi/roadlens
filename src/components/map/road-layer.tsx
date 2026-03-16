@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo } from "react"
+import { useMemo, useEffect, useCallback, useRef } from "react"
 import { useMap } from "react-map-gl/maplibre"
 import type {
 	FilterSpecification,
@@ -28,6 +28,8 @@ const wayLinesFilter: FilterSpecification = [
 	["geometry-type"],
 	"LineString",
 ]
+// nodeFilter kept for reference if needed
+// const nodeFilter: FilterSpecification = ["==", ["get", "type"], "node"]
 
 // Oneway filters (raw OSM: string values)
 const onewayForwardFilter: FilterSpecification = [
@@ -66,6 +68,13 @@ const solidFilter: FilterSpecification = [
 	["!", ["in", ["get", "highway"], ["literal", DASHED_TYPES]]],
 ]
 
+// barrierFilter replaced by iconNodeFilter below
+// const barrierFilter: FilterSpecification = [
+// 	"all",
+// 	["==", ["get", "type"], "node"],
+// 	["has", "barrier"],
+// ]
+
 // Nodes that have a specific icon (highway or barrier or traffic_calming)
 const ICON_HIGHWAY_TYPES = [
 	"traffic_signals", "bus_stop", "stop", "give_way", "crossing",
@@ -97,6 +106,13 @@ const plainNodeFilter: FilterSpecification = [
 
 /**
  * Generate iD-style chevron arrow (open '>') for SDF rendering.
+ * Arrow points right — MapLibre auto-rotates along line direction.
+ * SDF mode allows controlling color via `icon-color` paint property.
+ *
+ * Draws a slim, elegant chevron that matches iD Editor's visual style:
+ * - Narrow chevron angle (~60°) for a sleek look
+ * - Thin stroke for subtlety
+ * - Vertically compact to sit within road lines
  */
 function createChevronArrowSDF(size = 20): {
 	width: number
@@ -110,13 +126,14 @@ function createChevronArrowSDF(size = 20): {
 
 	ctx.clearRect(0, 0, size, size)
 
+	// Slim chevron: narrower angle, vertically compact
 	const leftX = size * 0.3
 	const tipX = size * 0.7
 	const midY = size * 0.5
-	const armY = size * 0.25
+	const armY = size * 0.25  // vertical extent of arms
 
 	ctx.strokeStyle = "#ffffff"
-	ctx.lineWidth = size * 0.1
+	ctx.lineWidth = size * 0.1  // thinner stroke (~2px at 20px)
 	ctx.lineCap = "round"
 	ctx.lineJoin = "round"
 
@@ -134,8 +151,8 @@ function createChevronArrowSDF(size = 20): {
 	}
 }
 
-/** All layer IDs created by RoadLayer for a given osmId */
-function layerIds(osmId: string) {
+/** Layer IDs for cleanup */
+function allLayerIds(osmId: string) {
 	return [
 		`osmviz:${osmId}:casing`,
 		`osmviz:${osmId}:ways`,
@@ -164,6 +181,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 	const sourceId = `osmviz:${osmId}:source`
 	const sourceLayerPrefix = `@osmix:${osmId}`
+
 	const bounds = dataset?.info.bbox as [number, number, number, number] | undefined
 
 	const colorBySpeed = speedVisible && speedLoaded && speedStats
@@ -190,10 +208,52 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 	const opacity = roadsVisible ? 1 : 0
 
-	// Add source + all layers using native MapLibre API
-	const addSourceAndLayers = useCallback((map: maplibregl.Map) => {
-		try {
-			if (map.getSource(sourceId)) return
+	// Track if layers have been created
+	const createdRef = useRef(false)
+
+	// Register SDF arrow + node icons on map
+	const registerImages = useCallback(() => {
+		const map = mapInstance?.getMap()
+		if (!map) return
+		if (!map.hasImage("oneway-arrow")) {
+			const arrow = createChevronArrowSDF(20)
+			map.addImage("oneway-arrow", arrow, { sdf: true })
+		}
+		registerNodeIcons(map, 24)
+	}, [mapInstance])
+
+	useEffect(() => {
+		const map = mapInstance?.getMap()
+		if (!map) return
+
+		if (map.isStyleLoaded()) {
+			registerImages()
+		} else {
+			map.once("style.load", registerImages)
+		}
+
+		// Re-add when style changes (basemap switch wipes images)
+		const onStyleData = () => { registerImages() }
+		map.on("styledata", onStyleData)
+		return () => { map.off("styledata", onStyleData) }
+	}, [mapInstance, registerImages])
+
+	// ── STRUCTURAL EFFECT: create source + layers (only on osmId change) ──
+	useEffect(() => {
+		const map = mapInstance?.getMap()
+		if (!map) return
+
+		const waysSL = `${sourceLayerPrefix}:ways`
+		const nodesSL = `${sourceLayerPrefix}:nodes`
+
+		const create = () => {
+			// Clean up any existing
+			for (const id of allLayerIds(osmId)) {
+				try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
+			}
+			try { if (map.getSource(sourceId)) map.removeSource(sourceId) } catch { /* */ }
+
+			registerImages()
 
 			map.addSource(sourceId, {
 				type: "vector",
@@ -203,10 +263,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				maxzoom: 14,
 			})
 
-			const waysSL = `${sourceLayerPrefix}:ways`
-			const nodesSL = `${sourceLayerPrefix}:nodes`
-
-			// Casing
+			// === CASING (outline) for solid roads ===
 			map.addLayer({
 				id: `osmviz:${osmId}:casing`,
 				type: "line",
@@ -215,13 +272,13 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				filter: solidFilter,
 				layout: { "line-join": "round", "line-cap": "round" },
 				paint: {
-					"line-color": colorBySpeed ? "rgba(0,0,0,0.3)" : (roadCasingColorExpression as any),
+					"line-color": roadCasingColorExpression as any,
 					"line-width": roadCasingWidthExpression as any,
-					"line-opacity": opacity * 0.8,
+					"line-opacity": 0.8,
 				},
 			})
 
-			// Solid ways
+			// === SOLID road fill ===
 			map.addLayer({
 				id: `osmviz:${osmId}:ways`,
 				type: "line",
@@ -230,13 +287,13 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				filter: solidFilter,
 				layout: { "line-join": "round", "line-cap": "round" },
 				paint: {
-					"line-color": roadColor as any,
+					"line-color": roadColorExpression as any,
 					"line-width": roadWidthExpression as any,
-					"line-opacity": opacity,
+					"line-opacity": 1,
 				},
 			})
 
-			// Dashed ways
+			// === DASHED road fill ===
 			map.addLayer({
 				id: `osmviz:${osmId}:ways-dashed`,
 				type: "line",
@@ -245,14 +302,14 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				filter: dashedFilter,
 				layout: { "line-join": "round", "line-cap": "butt" },
 				paint: {
-					"line-color": roadColor as any,
+					"line-color": roadColorExpression as any,
 					"line-width": roadWidthExpression as any,
 					"line-dasharray": [4, 3],
-					"line-opacity": opacity,
+					"line-opacity": 1,
 				},
 			})
 
-			// Way direction arrows (non-oneway, faint)
+			// === WAY DIRECTION ARROWS ===
 			map.addLayer({
 				id: `osmviz:${osmId}:way-direction`,
 				type: "symbol",
@@ -276,7 +333,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				},
 			})
 
-			// Oneway casing
+			// === ONEWAY ARROW CASING ===
 			map.addLayer({
 				id: `osmviz:${osmId}:oneway-casing`,
 				type: "symbol",
@@ -300,7 +357,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				},
 			})
 
-			// Oneway arrows forward
+			// === ONEWAY ARROWS FORWARD ===
 			map.addLayer({
 				id: `osmviz:${osmId}:oneway-arrows`,
 				type: "symbol",
@@ -324,7 +381,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				},
 			})
 
-			// Oneway reverse casing
+			// === ONEWAY REVERSE CASING ===
 			map.addLayer({
 				id: `osmviz:${osmId}:oneway-reverse-casing`,
 				type: "symbol",
@@ -349,7 +406,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				},
 			})
 
-			// Oneway arrows reverse
+			// === ONEWAY ARROWS REVERSE ===
 			map.addLayer({
 				id: `osmviz:${osmId}:oneway-arrows-reverse`,
 				type: "symbol",
@@ -374,7 +431,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				},
 			})
 
-			// Road labels
+			// === ROAD LABELS ===
 			map.addLayer({
 				id: `osmviz:${osmId}:road-labels`,
 				type: "symbol",
@@ -403,11 +460,11 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 					"text-color": "#e0e0e0",
 					"text-halo-color": "#1a1a2e",
 					"text-halo-width": 1.5,
-					"text-opacity": opacity * 0.85,
+					"text-opacity": 0.85,
 				},
 			})
 
-			// Node background circles
+			// === NODE BACKGROUND CIRCLES ===
 			map.addLayer({
 				id: `osmviz:${osmId}:node-bg`,
 				type: "circle",
@@ -430,16 +487,16 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 							["has", "traffic_calming"], "#ff9900",
 							"#555555",
 						],
-					] as any,
+					] as unknown as maplibregl.ExpressionSpecification,
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 9, 18, 12],
 					"circle-stroke-color": "#ffffff",
 					"circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 14, 1, 16, 1.5, 18, 2],
-					"circle-opacity": nodesVisible ? 1 : 0,
-					"circle-stroke-opacity": nodesVisible ? 1 : 0,
+					"circle-opacity": 1,
+					"circle-stroke-opacity": 1,
 				},
 			})
 
-			// Node icons
+			// === NODE ICONS ===
 			map.addLayer({
 				id: `osmviz:${osmId}:node-icons`,
 				type: "symbol",
@@ -460,18 +517,18 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 						["==", ["get", "barrier"], "lift_gate"], nodeIconId("lift_gate"),
 						["has", "traffic_calming"], nodeIconId("speed_bump"),
 						"",
-					] as any,
+					] as unknown as maplibregl.ExpressionSpecification,
 					"icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 16, 0.55, 18, 0.75],
 					"icon-allow-overlap": true,
 					"icon-ignore-placement": true,
 				} as unknown as SymbolLayerSpecification["layout"],
 				paint: {
 					"icon-color": "#ffffff",
-					"icon-opacity": nodesVisible ? 1 : 0,
+					"icon-opacity": 1,
 				},
 			})
 
-			// Plain nodes
+			// === PLAIN NODES ===
 			map.addLayer({
 				id: `osmviz:${osmId}:nodes-plain`,
 				type: "circle",
@@ -484,90 +541,80 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 					"circle-radius": ["interpolate", ["linear"], ["zoom"], 15, 2, 18, 4],
 					"circle-stroke-color": "#ffffff",
 					"circle-stroke-width": 1,
-					"circle-opacity": nodesVisible ? 1 : 0,
-					"circle-stroke-opacity": nodesVisible ? 1 : 0,
+					"circle-opacity": 1,
+					"circle-stroke-opacity": 1,
 				},
 			})
-		} catch (e) {
-			console.error("[RoadLayer] addSourceAndLayers error:", e)
-		}
-	}, [osmId, sourceId, sourceLayerPrefix, bounds, colorBySpeed, roadColor, opacity, nodesVisible])
 
-	// Remove all layers + source
-	const removeLayers = useCallback((map: maplibregl.Map) => {
-		for (const id of layerIds(osmId)) {
-			try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
-		}
-		try { if (map.getSource(sourceId)) map.removeSource(sourceId) } catch { /* */ }
-	}, [osmId, sourceId])
-
-	// Register SDF arrow + node icons
-	const registerImages = useCallback((map: maplibregl.Map) => {
-		if (!map.hasImage("oneway-arrow")) {
-			const arrow = createChevronArrowSDF(20)
-			map.addImage("oneway-arrow", arrow, { sdf: true })
-		}
-		registerNodeIcons(map, 24)
-	}, [])
-
-	// Main effect: add source + layers, handle style reloads
-	useEffect(() => {
-		const map = mapInstance?.getMap()
-		if (!map) return
-
-		const setup = () => {
-			registerImages(map)
-			removeLayers(map)
-			addSourceAndLayers(map)
+			createdRef.current = true
 		}
 
+		// Create now if style is loaded, or wait for it
 		if (map.isStyleLoaded()) {
-			setup()
+			create()
 		} else {
-			map.once("style.load", setup)
+			map.once("style.load", create)
 		}
 
-		// Re-add when basemap changes (style switch removes all sources/layers)
-		map.on("style.load", setup)
+		// Re-create after basemap switch (wipes all sources/layers)
+		const onStyleLoad = () => {
+			createdRef.current = false
+			create()
+		}
+		map.on("style.load", onStyleLoad)
 
 		return () => {
-			map.off("style.load", setup)
-			removeLayers(map)
+			map.off("style.load", onStyleLoad)
+			// Remove on unmount
+			for (const id of allLayerIds(osmId)) {
+				try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
+			}
+			try { if (map.getSource(sourceId)) map.removeSource(sourceId) } catch { /* */ }
+			createdRef.current = false
 		}
-	}, [mapInstance, addSourceAndLayers, removeLayers, registerImages])
+	// Only re-run when osmId or map changes — NOT for paint props
+	}, [mapInstance, osmId, sourceId, sourceLayerPrefix, bounds, registerImages])
 
-	// Update paint properties reactively
+	// ── REACTIVE EFFECT: update paint properties without recreating layers ──
 	useEffect(() => {
 		const map = mapInstance?.getMap()
-		if (!map) return
+		if (!map || !createdRef.current) return
 
-		const ids = layerIds(osmId)
-		for (const id of ids) {
-			try {
-				if (!map.getLayer(id)) continue
+		try {
+			// Road visibility
+			if (map.getLayer(`osmviz:${osmId}:casing`)) {
+				map.setPaintProperty(`osmviz:${osmId}:casing`, "line-color",
+					colorBySpeed ? "rgba(0,0,0,0.3)" : (roadCasingColorExpression as any))
+				map.setPaintProperty(`osmviz:${osmId}:casing`, "line-opacity", opacity * 0.8)
+			}
+			if (map.getLayer(`osmviz:${osmId}:ways`)) {
+				map.setPaintProperty(`osmviz:${osmId}:ways`, "line-color", roadColor as any)
+				map.setPaintProperty(`osmviz:${osmId}:ways`, "line-opacity", opacity)
+			}
+			if (map.getLayer(`osmviz:${osmId}:ways-dashed`)) {
+				map.setPaintProperty(`osmviz:${osmId}:ways-dashed`, "line-color", roadColor as any)
+				map.setPaintProperty(`osmviz:${osmId}:ways-dashed`, "line-opacity", opacity)
+			}
+			if (map.getLayer(`osmviz:${osmId}:road-labels`)) {
+				map.setPaintProperty(`osmviz:${osmId}:road-labels`, "text-opacity", opacity * 0.85)
+			}
 
-				if (id.endsWith(":casing")) {
-					map.setPaintProperty(id, "line-color", colorBySpeed ? "rgba(0,0,0,0.3)" : (roadCasingColorExpression as any))
-					map.setPaintProperty(id, "line-opacity", opacity * 0.8)
-				} else if (id.endsWith(":ways") || id.endsWith(":ways-dashed")) {
-					map.setPaintProperty(id, "line-color", roadColor as any)
-					map.setPaintProperty(id, "line-opacity", opacity)
-				} else if (id.endsWith(":road-labels")) {
-					map.setPaintProperty(id, "text-opacity", opacity * 0.85)
-				} else if (id.endsWith(":node-bg")) {
-					map.setPaintProperty(id, "circle-opacity", nodesVisible ? 1 : 0)
-					map.setPaintProperty(id, "circle-stroke-opacity", nodesVisible ? 1 : 0)
-				} else if (id.endsWith(":node-icons")) {
-					map.setPaintProperty(id, "icon-opacity", nodesVisible ? 1 : 0)
-				} else if (id.endsWith(":nodes-plain")) {
-					map.setPaintProperty(id, "circle-opacity", nodesVisible ? 1 : 0)
-					map.setPaintProperty(id, "circle-stroke-opacity", nodesVisible ? 1 : 0)
-				}
-			} catch { /* layer may not exist yet */ }
-		}
+			// Node visibility
+			if (map.getLayer(`osmviz:${osmId}:node-bg`)) {
+				map.setPaintProperty(`osmviz:${osmId}:node-bg`, "circle-opacity", nodesVisible ? 1 : 0)
+				map.setPaintProperty(`osmviz:${osmId}:node-bg`, "circle-stroke-opacity", nodesVisible ? 1 : 0)
+			}
+			if (map.getLayer(`osmviz:${osmId}:node-icons`)) {
+				map.setPaintProperty(`osmviz:${osmId}:node-icons`, "icon-opacity", nodesVisible ? 1 : 0)
+			}
+			if (map.getLayer(`osmviz:${osmId}:nodes-plain`)) {
+				map.setPaintProperty(`osmviz:${osmId}:nodes-plain`, "circle-opacity", nodesVisible ? 1 : 0)
+				map.setPaintProperty(`osmviz:${osmId}:nodes-plain`, "circle-stroke-opacity", nodesVisible ? 1 : 0)
+			}
+		} catch { /* layers may not exist yet */ }
 	}, [mapInstance, osmId, roadColor, colorBySpeed, opacity, nodesVisible])
 
-	// Apply feature states for speed coloring
+	// ── SPEED COLORING via feature state ──
 	useEffect(() => {
 		const map = mapInstance?.getMap()
 		if (!colorBySpeed || !speedStats || !map) return
@@ -594,5 +641,6 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 		return () => { map.off("sourcedata", applyStates) }
 	}, [colorBySpeed, speedData, speedStats, sourceId, sourceLayerPrefix, mapInstance])
 
+	// Component renders nothing — all rendering is via native MapLibre API
 	return null
 }
