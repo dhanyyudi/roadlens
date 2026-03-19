@@ -6,11 +6,12 @@ import { useUIStore } from "../../stores/ui-store"
 import { useOsm } from "../../hooks/use-osm"
 import { FileText, MapPin, Route, GitBranch, MapPinned, Download, ExternalLink, Globe, Loader2 } from "lucide-react"
 
-// Sample data - Denpasar only
+// Sample data - Denpasar only (using GeoJSON for now, PBF coming soon)
 const SAMPLE_FILE = {
-	name: "Denpasar, Bali",
-	url: "/samples/denpasar_sample.osm.pbf",
-	description: "Denpasar city roads (~3 MB)",
+	name: "Denpasar Center, Bali",
+	url: "/samples/denpasar_center.geojson",
+	description: "Central Denpasar roads (~1.7 MB)",
+	format: "geojson" as const,
 }
 
 // Overpass API endpoint
@@ -60,15 +61,28 @@ export function FilePanel() {
 				throw new Error(`Failed to download: ${response.statusText}`)
 			}
 			const blob = await response.blob()
-			const file = new File([blob], "denpasar_sample.osm.pbf", {
-				type: "application/octet-stream",
-			})
-			const result = await remote.fromPbf(file, { id: file.name })
-			store.setDataset({
-				osmId: result.id,
-				info: result,
-				fileName: file.name,
-			})
+			
+			if (SAMPLE_FILE.format === "geojson") {
+				const file = new File([blob], "denpasar_center.geojson", {
+					type: "application/geo+json",
+				})
+				const result = await remote.fromGeoJSON(file, { id: file.name })
+				store.setDataset({
+					osmId: result.id,
+					info: result,
+					fileName: file.name,
+				})
+			} else {
+				const file = new File([blob], "denpasar_sample.osm.pbf", {
+					type: "application/octet-stream",
+				})
+				const result = await remote.fromPbf(file, { id: file.name })
+				store.setDataset({
+					osmId: result.id,
+					info: result,
+					fileName: file.name,
+				})
+			}
 			store.setLoading(false)
 			store.setProgress(null)
 			setActiveTab("inspect")
