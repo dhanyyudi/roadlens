@@ -8,26 +8,27 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"typecheck": "tsc --noEmit",
-		"postinstall": "bash patches/fix-vt-relation-exclusion.sh"
+		"postinstall": "node patches/fix-vt-relation-exclusion.js",
+		"prebuild": "node patches/fix-vt-relation-exclusion.js"
 	},
 	"dependencies": {
-		"osmix": "^0.2.0",
+		"@duckdb/duckdb-wasm": "^1.29.0",
 		"comlink": "^4.4.2",
+		"lucide-react": "^0.500.0",
+		"maplibre-gl": "^5.5.0",
+		"osmix": "^0.2.0",
 		"react": "^19.1.0",
 		"react-dom": "^19.1.0",
 		"react-map-gl": "^8.1.0",
-		"maplibre-gl": "^5.5.0",
-		"zustand": "^5.0.0",
-		"lucide-react": "^0.500.0",
-		"@duckdb/duckdb-wasm": "^1.29.0"
+		"zustand": "^5.0.0"
 	},
 	"devDependencies": {
+		"@tailwindcss/vite": "^4.1.0",
+		"@types/geojson": "^7946.0.16",
 		"@types/react": "^19.1.0",
 		"@types/react-dom": "^19.1.0",
-		"@types/geojson": "^7946.0.16",
 		"@vitejs/plugin-react": "^4.5.0",
 		"tailwindcss": "^4.1.0",
-		"@tailwindcss/vite": "^4.1.0",
 		"typescript": "^5.8.0",
 		"vite": "^6.3.0"
 	}
