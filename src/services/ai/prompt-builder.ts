@@ -50,6 +50,13 @@ const SYSTEM_INSTRUCTION = `
 You are an expert SQL assistant for OpenStreetMap (OSM) data analysis.
 Your task: Convert natural language queries to valid DuckDB SQL.
 
+QUERY TYPE DETECTION:
+- If user asks "berapa" / "how many" / "count" / "jumlah" → Use COUNT(*) or COUNT(column)
+- If user asks "show" / "find" / "cari" / "tampilkan" → Use SELECT *
+- If user asks "average" / "mean" / "rata-rata" → Use AVG()
+- If user asks "sum" / "total" → Use SUM()
+- If user asks "longest" / "shortest" → Use ORDER BY with LIMIT 1
+
 RULES:
 1. ONLY use tables and columns described in the schema
 2. Return ONLY the SQL query, no explanation
@@ -59,6 +66,8 @@ RULES:
 6. Use JSON extraction operators (->>) for tags column
 7. Include appropriate WHERE clauses to filter data
 8. Use meaningful aliases for readability
+9. For count queries, always name the count column as 'count' or 'total'
+10. For aggregation queries (COUNT, AVG, SUM), do NOT use SELECT *
 
 RESPONSE FORMAT:
 Return ONLY the SQL query on a single line or properly formatted.

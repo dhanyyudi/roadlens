@@ -27,11 +27,64 @@ export interface UseAIQueryReturn {
 	isAIConfigured: boolean
 }
 
+// Detect query type from SQL
+function detectQueryType(sql: string): 'count' | 'aggregate' | 'select' {
+	const upperSQL = sql.toUpperCase()
+	if (upperSQL.includes('COUNT(*)') || upperSQL.includes('COUNT(')) {
+		return 'count'
+	}
+	if (upperSQL.includes('AVG(') || upperSQL.includes('SUM(') || upperSQL.includes('MIN(') || upperSQL.includes('MAX(')) {
+		return 'aggregate'
+	}
+	return 'select'
+}
+
+// Format result message based on query type
+function formatResultMessage(queryType: 'count' | 'aggregate' | 'select', results: QueryResults): string {
+	if (results.error) {
+		return `Query failed: ${results.error}`
+	}
+
+	if (queryType === 'count') {
+		// For COUNT queries, show the actual count value
+		const count = results.sampleData?.[0]?.count || results.sampleData?.[0]?.total || results.rowCount || 0
+		return `Found **${count}** roads matching your query.`
+	}
+
+	if (queryType === 'aggregate') {
+		// For aggregate queries, show the result
+		if (results.sampleData && results.sampleData.length > 0) {
+			const row = results.sampleData[0] as Record<string, number | string>
+			const entries = Object.entries(row)
+				.filter(([key]) => key !== 'id' && key !== 'name' && key !== 'highway')
+				.map(([key, value]) => {
+					const numVal = Number(value)
+					if (!isNaN(numVal)) {
+						return `${key}: ${numVal.toFixed(2)}`
+					}
+					return `${key}: ${value}`
+				})
+				.join(', ')
+			return `Result: ${entries}`
+		}
+		return `Query completed with ${results.rowCount} result(s).`
+	}
+
+	// For SELECT queries
+	if (results.rowCount === 0) {
+		return 'No roads found matching your query.'
+	}
+	if (results.rowCount === 1) {
+		return 'Found 1 road matching your query.'
+	}
+	return `Found ${results.rowCount} roads matching your query.`
+}
+
 export function useAIQuery(): UseAIQueryReturn {
 	const store = useAIQueryStore()
 	const duckDBState = useDuckDB()
 	const { isSynced: isDataReady, isSyncing, progress: syncProgress } = useOsmDuckDBSync()
-	const [isAIConfigured] = useState(true) // Always true with Edge Function
+	const [isAIConfigured] = useState(true)
 
 	// Execute SQL on DuckDB
 	const executeSQL = useCallback(
@@ -60,7 +113,7 @@ export function useAIQuery(): UseAIQueryReturn {
 				return {
 					rowCount: result.rows.length,
 					executionTime: performance.now() - startTime,
-					sampleData: result.rows.slice(0, 5),
+					sampleData: result.rows.slice(0, 10),
 					allData: result.rows,
 				}
 			} catch (error: any) {
@@ -103,6 +156,9 @@ export function useAIQuery(): UseAIQueryReturn {
 				store.setCurrentSQL(result.sql)
 				store.setStatus('executing')
 
+				// Detect query type
+				const queryType = detectQueryType(result.sql)
+
 				// Auto-execute immediately
 				const execResult = await executeSQL(result.sql)
 
@@ -110,10 +166,8 @@ export function useAIQuery(): UseAIQueryReturn {
 					store.addErrorMessage(`Query failed: ${execResult.error}`)
 					store.setStatus('error')
 				} else {
-					// Show success message with results summary
-					const summary = execResult.rowCount > 0
-						? `Found ${execResult.rowCount} roads matching your query.`
-						: 'No roads found matching your query.'
+					// Format message based on query type
+					const summary = formatResultMessage(queryType, execResult)
 					
 					store.addAssistantMessage(
 						summary,
