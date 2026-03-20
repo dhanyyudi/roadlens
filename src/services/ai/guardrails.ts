@@ -78,8 +78,9 @@ export function validateSQL(sql: string): ValidationResult {
 	const trimmed = sql.trim()
 
 	// Must start with allowed command
-	const firstWord = trimmed.split(/\s+/)[0].toUpperCase()
-	if (!ALLOWED_COMMANDS.includes(firstWord)) {
+	const parts = trimmed.split(/\s+/)
+	const firstWord = parts[0]?.toUpperCase()
+	if (!firstWord || !ALLOWED_COMMANDS.includes(firstWord)) {
 		return {
 			valid: false,
 			reason: `SQL command '${firstWord}' not allowed. Only ${ALLOWED_COMMANDS.join(', ')} are permitted.`,
@@ -144,17 +145,19 @@ export function checkRateLimit(): ValidationResult {
 	const oneMinuteAgo = now - 60000
 
 	// Remove old timestamps
-	while (queryTimestamps.length > 0 && queryTimestamps[0] < oneMinuteAgo) {
+	while (queryTimestamps.length > 0 && queryTimestamps[0]! < oneMinuteAgo) {
 		queryTimestamps.shift()
 	}
 
 	// Check limit
 	if (queryTimestamps.length >= AI_CONFIG.rateLimit.maxQueriesPerMinute) {
 		const oldestQuery = queryTimestamps[0]
-		const waitSeconds = Math.ceil((60000 - (now - oldestQuery)) / 1000)
-		return {
-			valid: false,
-			reason: `Rate limit exceeded. Please wait ${waitSeconds} seconds before sending another query.`,
+		if (oldestQuery) {
+			const waitSeconds = Math.ceil((60000 - (now - oldestQuery)) / 1000)
+			return {
+				valid: false,
+				reason: `Rate limit exceeded. Please wait ${waitSeconds} seconds before sending another query.`,
+			}
 		}
 	}
 

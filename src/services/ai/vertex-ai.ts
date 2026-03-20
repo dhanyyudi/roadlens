@@ -1,157 +1,115 @@
-// Vertex AI / Gemini API Service
-// Client-side implementation using Google Generative AI SDK
+// Vertex AI Client - Calls local Edge Function endpoint
+// This file runs in browser, NO API keys here!
 
-import { GoogleGenerativeAI, type GenerationConfig, type SafetySetting } from '@google/generative-ai'
-import { AI_CONFIG, isAIEnabled } from '@/lib/ai-config'
-import { buildPrompt, buildCorrectionPrompt } from './prompt-builder'
-import { validatePrompt, validateSQL, sanitizeSQL, ensureLimit, checkRateLimit, type ValidationResult } from './guardrails'
-
-// API Key from environment (Google AI Studio key for client-side)
-const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || ''
-
-// Initialize Gemini API client
-let genAI: GoogleGenerativeAI | null = null
-let model: any = null
-
-/**
- * Initialize the AI client
- */
-export function initAI(): boolean {
-	if (!API_KEY) {
-		console.warn('Gemini API key not configured')
-		return false
-	}
-
-	try {
-		genAI = new GoogleGenerativeAI(API_KEY)
-		model = genAI.getGenerativeModel({
-			model: AI_CONFIG.model,
-			generationConfig: AI_CONFIG.generationConfig as GenerationConfig,
-			safetySettings: AI_CONFIG.safetySettings as SafetySetting[],
-		})
-		console.log('AI client initialized with model:', AI_CONFIG.model)
-		return true
-	} catch (error) {
-		console.error('Failed to initialize AI client:', error)
-		return false
-	}
-}
-
-/**
- * Check if AI is ready
- */
-export function isAIReady(): boolean {
-	return !!model
-}
+import { validatePrompt } from './guardrails'
 
 export interface NL2SQLResult {
 	sql: string
-	explanation?: string
 	error?: string
 }
 
+export interface QueryHistoryItem {
+	role: 'user' | 'assistant'
+	content: string
+}
+
+// API endpoint (relative, works in both dev and production)
+const API_ENDPOINT = '/api/ai/query'
+
 /**
- * Convert natural language to SQL
+ * Check if AI is configured (always true for Edge Function approach)
  */
-export async function naturalLanguageToSQL(query: string): Promise<NL2SQLResult> {
-	// Check if AI is enabled
-	if (!isAIReady()) {
-		return { sql: '', error: 'AI not configured. Please add API key.' }
-	}
+export function isAIReady(): boolean {
+	return true // Edge Function handles the configuration
+}
 
-	// Rate limiting
-	const rateCheck = checkRateLimit()
-	if (!rateCheck.valid) {
-		return { sql: '', error: rateCheck.reason }
-	}
+/**
+ * Initialize AI (no-op for Edge Function approach)
+ */
+export function initAI(): boolean {
+	return true
+}
 
-	// Validate prompt
-	const promptCheck = validatePrompt(query)
-	if (!promptCheck.valid) {
-		return { sql: '', error: promptCheck.reason }
+/**
+ * Convert natural language to SQL via Edge Function
+ */
+export async function naturalLanguageToSQL(
+	query: string,
+	history?: QueryHistoryItem[]
+): Promise<NL2SQLResult> {
+	// Validate prompt client-side (double protection)
+	const validation = validatePrompt(query)
+	if (!validation.valid) {
+		return { sql: '', error: validation.reason }
 	}
 
 	try {
-		// Build prompt
-		const prompt = buildPrompt(query)
+		const response = await fetch(API_ENDPOINT, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				prompt: query,
+				history,
+			}),
+		})
 
-		// Call Gemini API
-		const result = await model.generateContent(prompt)
-		const response = await result.response
-		const text = response.text()
+		const data = await response.json()
 
-		// Extract SQL from response
-		let sql = text.trim()
-
-		// Remove markdown code blocks if present
-		sql = sql.replace(/```sql\n?/g, '').replace(/```\n?/g, '').trim()
-
-		// Validate generated SQL
-		const sqlCheck = validateSQL(sql)
-		if (!sqlCheck.valid) {
-			return { sql: '', error: sqlCheck.reason }
+		if (!response.ok) {
+			return {
+				sql: '',
+				error: data.error || `HTTP ${response.status}: ${response.statusText}`,
+			}
 		}
 
-		// Sanitize and add limit
-		sql = sanitizeSQL(sql)
-		sql = ensureLimit(sql, AI_CONFIG.queryLimits.maxResults)
+		if (!data.sql) {
+			return {
+				sql: '',
+				error: 'No SQL returned from server',
+			}
+		}
 
-		return { sql }
+		return { sql: data.sql }
 	} catch (error: any) {
-		console.error('AI generation error:', error)
+		console.error('AI query error:', error)
 
-		// Handle specific errors
-		if (error.message?.includes('429')) {
-			return { sql: '', error: 'API rate limit reached. Please try again in a moment.' }
+		if (error.name === 'TypeError' && error.message.includes('fetch')) {
+			return {
+				sql: '',
+				error: 'Network error. Please check your connection.',
+			}
 		}
 
-		if (error.message?.includes('401') || error.message?.includes('403')) {
-			return { sql: '', error: 'API authentication failed. Please check your API key.' }
+		return {
+			sql: '',
+			error: `Request failed: ${error.message || 'Unknown error'}`,
 		}
-
-		return { sql: '', error: `AI generation failed: ${error.message || 'Unknown error'}` }
 	}
 }
 
 /**
- * Retry SQL generation with error correction
+ * Retry SQL generation with error correction (simplified version)
  */
 export async function correctSQL(
 	originalQuery: string,
 	failedSQL: string,
 	errorMessage: string
 ): Promise<NL2SQLResult> {
-	if (!isAIReady()) {
-		return { sql: '', error: 'AI not configured' }
-	}
+	// Build a correction prompt
+	const correctionPrompt = `The following SQL query failed:
 
-	try {
-		const prompt = buildCorrectionPrompt(originalQuery, failedSQL, errorMessage)
+Original request: "${originalQuery}"
+Generated SQL: ${failedSQL}
+Error: ${errorMessage}
 
-		const result = await model.generateContent(prompt)
-		const response = await result.response
-		const text = response.text()
+Please fix the SQL query.`
 
-		let sql = text.trim().replace(/```sql\n?/g, '').replace(/```\n?/g, '').trim()
-
-		const sqlCheck = validateSQL(sql)
-		if (!sqlCheck.valid) {
-			return { sql: '', error: sqlCheck.reason }
-		}
-
-		sql = sanitizeSQL(sql)
-		sql = ensureLimit(sql, AI_CONFIG.queryLimits.maxResults)
-
-		return { sql }
-	} catch (error: any) {
-		console.error('SQL correction error:', error)
-		return { sql: '', error: `Correction failed: ${error.message || 'Unknown error'}` }
-	}
+	return naturalLanguageToSQL(correctionPrompt)
 }
 
-/**
- * Get query statistics for cost tracking
- */
+// Query stats (client-side tracking)
 export interface QueryStats {
 	queriesToday: number
 	totalTokens: number
@@ -174,10 +132,9 @@ export function resetQueryStats(): void {
 	stats.estimatedCost = 0
 }
 
-// Track stats on each query
 export function trackQuery(tokensUsed: number): void {
 	stats.queriesToday++
 	stats.totalTokens += tokensUsed
-	// Gemini 2.0 Flash: ~$0.000004 per 1K characters (approximate)
-	stats.estimatedCost += (tokensUsed / 1000) * 0.000004
+	// Vertex AI Gemini 3 Flash: ~$0.000001 per 1K characters (approximate)
+	stats.estimatedCost += (tokensUsed / 1000) * 0.000001
 }

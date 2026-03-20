@@ -14,3 +14,5 @@ public/gif/
 *.mp4
 *.mov
 *.avi
+.vercel
+.env*.local

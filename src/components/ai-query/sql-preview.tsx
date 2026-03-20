@@ -2,7 +2,7 @@
 import { useAIQuery } from '@/hooks/use-ai-query'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Check, X, Play, Code } from 'lucide-react'
+import { X, Play, Code } from 'lucide-react'
 
 interface SQLPreviewProps {
 	sql: string

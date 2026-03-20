@@ -1,7 +1,7 @@
 // Prompt Engineering for NL2SQL
 // Builds comprehensive prompts with schema context
 
-import { hasFullSupport } from '@/lib/browser-support'
+// Prompt builder for NL2SQL
 
 // OSM Database Schema Description
 const SCHEMA_CONTEXT = `

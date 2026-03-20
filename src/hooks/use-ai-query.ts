@@ -1,7 +1,7 @@
 // AI Query Hook - Main logic for AI-powered queries
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { useAIQueryStore, type QueryResults } from '@/stores/ai-query-store'
-import { naturalLanguageToSQL, correctSQL, initAI, isAIReady } from '@/services/ai/vertex-ai'
+import { naturalLanguageToSQL } from '@/services/ai/vertex-ai'
 import { useDuckDB } from './use-duckdb'
 
 export interface UseAIQueryReturn {
@@ -10,7 +10,7 @@ export interface UseAIQueryReturn {
 	isLoading: boolean
 	status: 'idle' | 'generating' | 'confirming' | 'executing' | 'completed' | 'error'
 	currentSQL: string | null
-	messages: typeof useAIQueryStore.getState.messages
+	messages: import('@/stores/ai-query-store').QueryMessage[]
 
 	// Actions
 	toggleOpen: () => void
@@ -26,14 +26,8 @@ export interface UseAIQueryReturn {
 
 export function useAIQuery(): UseAIQueryReturn {
 	const store = useAIQueryStore()
-	const { db } = useDuckDB()
-	const [isAIConfigured, setIsAIConfigured] = useState(false)
-
-	// Initialize AI on mount
-	useEffect(() => {
-		const initialized = initAI()
-		setIsAIConfigured(initialized)
-	}, [])
+	const duckDBState = useDuckDB()
+	const [isAIConfigured] = useState(true) // Always true with Edge Function
 
 	// Send natural language query
 	const sendQuery = useCallback(
@@ -74,7 +68,7 @@ export function useAIQuery(): UseAIQueryReturn {
 	// Execute SQL on DuckDB
 	const executeSQL = useCallback(
 		async (sql: string): Promise<QueryResults> => {
-			if (!db) {
+			if (!duckDBState.duckdb) {
 				return {
 					rowCount: 0,
 					executionTime: 0,
@@ -85,17 +79,20 @@ export function useAIQuery(): UseAIQueryReturn {
 			const startTime = performance.now()
 
 			try {
-				const conn = await db.connect()
-				const result = await conn.query(sql)
-				const rows = result.toArray()
-				await conn.close()
-
-				const executionTime = performance.now() - startTime
+				const result = await duckDBState.duckdb.executeQuery(sql)
+				
+				if (result.error) {
+					return {
+						rowCount: 0,
+						executionTime: performance.now() - startTime,
+						error: result.error,
+					}
+				}
 
 				return {
-					rowCount: rows.length,
-					executionTime,
-					sampleData: rows.slice(0, 5), // First 5 rows
+					rowCount: result.rows.length,
+					executionTime: performance.now() - startTime,
+					sampleData: result.rows.slice(0, 5), // First 5 rows
 				}
 			} catch (error: any) {
 				return {
@@ -105,7 +102,7 @@ export function useAIQuery(): UseAIQueryReturn {
 				}
 			}
 		},
-		[db]
+		[duckDBState]
 	)
 
 	// Confirm and execute SQL

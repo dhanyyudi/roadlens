@@ -1,5 +1,5 @@
 // Chat Message Component - Displays user/assistant messages
-import { useAIQueryStore, type QueryMessage } from '@/stores/ai-query-store'
+import type { QueryMessage } from '@/stores/ai-query-store'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'

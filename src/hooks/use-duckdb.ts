@@ -42,6 +42,8 @@ export interface DuckDBClient {
 		}>
 	>
 	getTimebands(): Promise<number[]>
+	// For AI Query feature
+	executeQuery(sql: string): Promise<{ rows: unknown[]; schema: unknown; error?: string }>
 }
 
 const client: DuckDBClient = {
@@ -136,6 +138,24 @@ const client: DuckDBClient = {
 			if (row) bands.push(Number(row.timeband))
 		}
 		return bands
+	},
+
+	async executeQuery(sql: string) {
+		if (!_conn) {
+			return { rows: [], schema: null, error: 'DuckDB not initialized' }
+		}
+		
+		try {
+			const result = await _conn.query(sql)
+			const rows: unknown[] = []
+			for (let i = 0; i < result.numRows; i++) {
+				const row = result.get(i)
+				if (row) rows.push(row)
+			}
+			return { rows, schema: result.schema }
+		} catch (err: any) {
+			return { rows: [], schema: null, error: err.message || 'Query execution failed' }
+		}
 	},
 }
 
