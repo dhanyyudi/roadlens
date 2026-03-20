@@ -3,6 +3,7 @@ import { useMap } from "react-map-gl/maplibre"
 import type {
 	FilterSpecification,
 	SymbolLayerSpecification,
+	MapSourceDataEvent,
 } from "maplibre-gl"
 import { zigzag } from "@osmix/shared/zigzag"
 import { osmixIdToTileUrl } from "../../lib/osmix-vector-protocol"
@@ -248,6 +249,8 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 		const nodesSL = `${sourceLayerPrefix}:nodes`
 
 		const create = () => {
+			console.log(`[RoadLayer] Creating source and layers for ${osmId}, bounds:`, bounds)
+			
 			// Clean up any existing
 			for (const id of allLayerIds(osmId)) {
 				try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
@@ -256,13 +259,18 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 			registerImages()
 
+			const tileUrl = osmixIdToTileUrl(osmId)
+			console.log(`[RoadLayer] Vector tile URL: ${tileUrl}`)
+
 			map.addSource(sourceId, {
 				type: "vector",
-				tiles: [osmixIdToTileUrl(osmId)],
+				tiles: [tileUrl],
 				bounds,
 				minzoom: VECTOR_MIN_ZOOM,
 				maxzoom: VECTOR_MAX_ZOOM,
 			})
+			
+			console.log(`[RoadLayer] Source created: ${sourceId}`)
 
 			// === CASING (outline) for solid roads ===
 			map.addLayer({
@@ -548,6 +556,18 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 			})
 
 			createdRef.current = true
+			console.log(`[RoadLayer] All layers created for ${osmId}`)
+			
+			// Debug: Check if source exists after creation
+			setTimeout(() => {
+				const source = map.getSource(sourceId)
+				console.log(`[RoadLayer] Source check: ${sourceId}, exists: ${!!source}, type: ${(source as any)?.type}`)
+				
+				// Check if layers exist
+				const casingLayer = map.getLayer(`osmviz:${osmId}:casing`)
+				const waysLayer = map.getLayer(`osmviz:${osmId}:ways`)
+				console.log(`[RoadLayer] Layers check: casing=${!!casingLayer}, ways=${!!waysLayer}`)
+			}, 100)
 		}
 
 		// Create now if style is loaded, or wait for it
@@ -563,9 +583,19 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 			create()
 		}
 		map.on("style.load", onStyleLoad)
+		
+		// Debug: listen for source data events
+		const onSourceData = (e: MapSourceDataEvent) => {
+			if (e.sourceId === sourceId && e.dataType === 'source') {
+				const tileInfo = e.tile ? `${e.tile.x}/${e.tile.y}/${e.tile.z}` : 'none'
+				console.log(`[RoadLayer] Source data: ${e.sourceId}, loaded: ${e.isSourceLoaded}, tile: ${tileInfo}`)
+			}
+		}
+		map.on("sourcedata", onSourceData)
 
 		return () => {
 			map.off("style.load", onStyleLoad)
+			map.off("sourcedata", onSourceData)
 			// Remove on unmount
 			for (const id of allLayerIds(osmId)) {
 				try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
