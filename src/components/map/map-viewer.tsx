@@ -19,6 +19,7 @@ import { BasemapSwitcher } from "./basemap-switcher"
 import { MapLegend } from "./map-legend"
 import { BBoxDrawLayer } from "./bbox-draw-layer"
 import { CursorCoordinates } from "./cursor-coordinates"
+import { ZoomNotification } from "./zoom-notification"
 // Protocol imports ensure they're registered at module load time
 import "../../lib/osmix-vector-protocol"
 import "../../lib/osmix-raster-protocol"
@@ -335,6 +336,7 @@ export function MapViewer() {
 					console.log('[MapViewer] dataset:', dataset ? { osmId: dataset.osmId, fileName: dataset.fileName } : null)
 					return dataset ? (
 						<>
+							<RasterLayer osmId={dataset.osmId} />
 							<RoadLayer osmId={dataset.osmId} />
 							<RestrictionLayer osmId={dataset.osmId} />
 							<AccessLayer osmId={dataset.osmId} />
@@ -347,6 +349,7 @@ export function MapViewer() {
 				<BBoxDrawLayer />
 			</Map>
 			<CursorCoordinates />
+			<ZoomNotification />
 			<GeocodingOverlay />
 			<BasemapSwitcher />
 			<MapLegend />

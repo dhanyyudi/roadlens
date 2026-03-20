@@ -3,13 +3,14 @@ export const RASTER_PROTOCOL_NAME = "@osmix/raster"
 export const MIN_ZOOM = 2
 export const MAX_ZOOM = 22
 
-// Vector tile settings - lowered for better large file support
-export const MIN_PICKABLE_ZOOM = 8  // Lowered from 10 to show data earlier
-export const VECTOR_MIN_ZOOM = 8    // When vector tiles become visible
+// Vector tile settings - zoom 10+ for large files like Thailand
+// Zoom 8-9 terlalu berat untuk generate vector tiles dari 24M nodes
+export const MIN_PICKABLE_ZOOM = 10
+export const VECTOR_MIN_ZOOM = 10   // Vector tiles mulai zoom 10
 export const VECTOR_MAX_ZOOM = 14
 
 // Raster preview settings - for low-zoom overview of large datasets
-export const RASTER_MAX_ZOOM = 8    // Raster tiles up to this zoom (exclusive)
+export const RASTER_MAX_ZOOM = 10   // Raster tiles up to zoom 10 (exclusive)
 export const RASTER_OPACITY = 0.9
 
 export const DEFAULT_ZOOM = 5
