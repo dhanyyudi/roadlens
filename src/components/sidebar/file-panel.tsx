@@ -5,7 +5,7 @@ import { useOsmStore } from "../../stores/osm-store"
 import { useUIStore } from "../../stores/ui-store"
 import { useOsm } from "../../hooks/use-osm"
 import { osmXmlToGeoJSON, formatBbox, calculateBboxAreaKm2 } from "../../lib/osm-xml-parser"
-import { FileText, MapPin, Route, GitBranch, MapPinned, Download, SquareDashedMousePointer, Loader2, X, Check } from "lucide-react"
+import { FileText, MapPin, Route, GitBranch, MapPinned, SquareDashedMousePointer, Loader2, X, Check, Zap, ArrowRight } from "lucide-react"
 
 // Sample data - Denpasar only (roads/highway only, filtered)
 const SAMPLE_FILE = {
@@ -200,22 +200,45 @@ out geom;`
 				disabled={isLoading || !remote}
 			/>
 
-			{/* Sample Data Section */}
-			<div className="rounded-lg bg-zinc-800/50 p-3">
-				<div className="mb-2 flex items-center gap-2">
-					<MapPinned className="h-4 w-4 text-blue-400" />
-					<span className="text-xs font-medium text-zinc-300">Try Sample Data</span>
+			{/* Sample Data Section - Prominent Quick Start */}
+			<div className="relative overflow-hidden rounded-lg border border-blue-500/30 bg-gradient-to-br from-blue-900/30 via-zinc-800/50 to-zinc-800/50 p-3">
+				{/* Quick Start Badge */}
+				<div className="absolute right-2 top-2">
+					<span className="inline-flex items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-[10px] font-medium text-green-400">
+						<Zap className="h-3 w-3" />
+						Quick Start
+					</span>
 				</div>
+				
+				<div className="mb-3 flex items-center gap-2">
+					<div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/20">
+						<MapPinned className="h-4 w-4 text-blue-400" />
+					</div>
+					<div>
+						<span className="text-xs font-semibold text-zinc-200">Try Sample Data</span>
+						<p className="text-[10px] text-zinc-500">Instant demo, no setup needed</p>
+					</div>
+				</div>
+				
 				<button
 					onClick={loadSample}
 					disabled={isLoading || !remote}
-					className="flex w-full items-center justify-between rounded-md bg-zinc-700/50 px-3 py-2 text-left text-xs transition-colors hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+					className="group flex w-full items-center justify-between rounded-lg bg-blue-600/20 px-3 py-2.5 text-left text-xs transition-all hover:bg-blue-600/30 hover:shadow-lg hover:shadow-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
 				>
-					<div>
-						<div className="font-medium text-zinc-200">{SAMPLE_FILE.name}</div>
-						<div className="text-zinc-500">{SAMPLE_FILE.description}</div>
+					<div className="flex items-center gap-2">
+						<div className="flex h-6 w-6 items-center justify-center rounded-md bg-blue-500/20 group-hover:bg-blue-500/30 transition-colors">
+							<span className="text-xs">🇮🇩</span>
+						</div>
+						<div>
+							<div className="font-medium text-blue-300 group-hover:text-blue-200 transition-colors">{SAMPLE_FILE.name}</div>
+							<div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+								<span>~5 MB</span>
+								<span className="text-zinc-600">•</span>
+								<span className="text-green-400/80">No download required</span>
+							</div>
+						</div>
 					</div>
-					<Download className="h-3.5 w-3.5 text-zinc-400" />
+					<ArrowRight className="h-4 w-4 text-blue-400 transition-transform group-hover:translate-x-0.5" />
 				</button>
 			</div>
 
