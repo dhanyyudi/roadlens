@@ -3,15 +3,24 @@ export const RASTER_PROTOCOL_NAME = "@osmix/raster"
 export const MIN_ZOOM = 2
 export const MAX_ZOOM = 22
 
-// Vector tile settings - zoom 10+ for large files like Thailand
-// Zoom 8-9 terlalu berat untuk generate vector tiles dari 24M nodes
-export const MIN_PICKABLE_ZOOM = 10
-export const VECTOR_MIN_ZOOM = 10   // Vector tiles mulai zoom 10
+// Vector tile settings - Dynamic based on file size
+// File kecil (< 500K nodes): Vector zoom 0+
+// File medium (500K-2M nodes): Vector zoom 8+  
+// File besar (> 2M nodes): Vector zoom 10+
+export const MIN_PICKABLE_ZOOM = 10  // Default minimum
+export const VECTOR_MIN_ZOOM = 10    // Default for large files
 export const VECTOR_MAX_ZOOM = 14
 
-// Raster preview settings - for low-zoom overview of large datasets
-export const RASTER_MAX_ZOOM = 10   // Raster tiles up to zoom 10 (exclusive)
+// Raster preview settings
+export const RASTER_MAX_ZOOM = 10   // Default for large files
 export const RASTER_OPACITY = 0.9
+
+// Thresholds untuk smart detection
+export const FILE_SIZE_THRESHOLDS = {
+	FULL_VECTOR: 500_000,      // < 500K nodes = full vector
+	HYBRID: 2_000_000,         // 500K - 2M = hybrid (raster 0-8, vector 8+)
+	RASTER_REQUIRED: 2_000_000 // > 2M = raster 0-10, vector 10+
+} as const
 
 export const DEFAULT_ZOOM = 5
 

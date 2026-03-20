@@ -7,7 +7,7 @@ import type {
 } from "maplibre-gl"
 import { zigzag } from "@osmix/shared/zigzag"
 import { osmixIdToTileUrl } from "../../lib/osmix-vector-protocol"
-import { VECTOR_MIN_ZOOM, VECTOR_MAX_ZOOM } from "../../constants"
+import { VECTOR_MAX_ZOOM, FILE_SIZE_THRESHOLDS } from "../../constants"
 import { useUIStore } from "../../stores/ui-store"
 import { useOsmStore } from "../../stores/osm-store"
 import { useSpeedStore } from "../../stores/speed-store"
@@ -191,7 +191,15 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 	const colorBySpeed = speedVisible && speedLoaded && speedStats
 
-	console.log(`[RoadLayer] mapInstance:`, mapInstance ? 'exists' : 'null')
+	// Calculate min zoom based on file size
+	const nodeCount = dataset?.info.stats.nodes ?? 0
+	const vectorMinZoom = useMemo(() => {
+		if (nodeCount <= FILE_SIZE_THRESHOLDS.FULL_VECTOR) return 0
+		if (nodeCount <= FILE_SIZE_THRESHOLDS.HYBRID) return 8
+		return 10
+	}, [nodeCount])
+
+	console.log(`[RoadLayer] mapInstance:`, mapInstance ? 'exists' : 'null', `vectorMinZoom: ${vectorMinZoom}, nodes: ${nodeCount}`)
 
 	// Dynamic road color
 	const roadColor = useMemo(() => {
@@ -247,8 +255,12 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 	// ── STRUCTURAL EFFECT: create source + layers (only on osmId change) ──
 	useEffect(() => {
+		console.log(`[RoadLayer] useEffect triggered - osmId: ${osmId}, mapInstance: ${!!mapInstance}, bounds: ${!!bounds}`)
 		const map = mapInstance?.getMap()
-		if (!map) return
+		if (!map) {
+			console.log(`[RoadLayer] Early return - no map`)
+			return
+		}
 
 		const waysSL = `${sourceLayerPrefix}:ways`
 		const nodesSL = `${sourceLayerPrefix}:nodes`
@@ -271,7 +283,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				type: "vector",
 				tiles: [tileUrl],
 				bounds,
-				minzoom: VECTOR_MIN_ZOOM,
+				minzoom: vectorMinZoom,
 				maxzoom: VECTOR_MAX_ZOOM,
 			})
 			
@@ -608,8 +620,8 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 			try { if (map.getSource(sourceId)) map.removeSource(sourceId) } catch { /* */ }
 			createdRef.current = false
 		}
-	// Only re-run when osmId or map changes — NOT for paint props
-	}, [mapInstance, osmId, sourceId, sourceLayerPrefix, bounds, registerImages])
+	// Re-run when osmId, map, or vectorMinZoom changes
+	}, [mapInstance, osmId, sourceId, sourceLayerPrefix, bounds, registerImages, vectorMinZoom])
 
 	// ── REACTIVE EFFECT: update paint properties without recreating layers ──
 	useEffect(() => {

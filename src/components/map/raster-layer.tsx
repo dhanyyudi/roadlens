@@ -1,7 +1,7 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useMemo } from "react"
 import { useMap } from "react-map-gl/maplibre"
 import { osmixIdToRasterTileUrl } from "../../lib/osmix-raster-protocol"
-import { RASTER_MAX_ZOOM, RASTER_OPACITY } from "../../constants"
+import { RASTER_OPACITY, FILE_SIZE_THRESHOLDS } from "../../constants"
 import { useOsmStore } from "../../stores/osm-store"
 import { useUIStore } from "../../stores/ui-store"
 
@@ -19,8 +19,10 @@ function allRasterLayerIds(osmId: string) {
  * Shows a rasterized image of OSM data for zoom levels where vector tiles
  * would be too heavy to generate (large area coverage).
  * 
- * This layer only shows at zoom 0-8. At zoom 9+, it automatically hides
- * and vector tiles take over for interactive features.
+ * Dynamic threshold:
+ * - File < 500K nodes: No raster needed (full vector)
+ * - File 500K-2M nodes: Raster 0-8, vector 8+
+ * - File > 2M nodes: Raster 0-10, vector 10+
  */
 export function RasterLayer({ osmId }: RasterLayerProps) {
 	const roadsVisible = useUIStore((s) => s.layers.roads)
@@ -30,7 +32,18 @@ export function RasterLayer({ osmId }: RasterLayerProps) {
 	const sourceId = `osmviz:${osmId}:raster-source`
 	const bounds = dataset?.info.bbox as [number, number, number, number] | undefined
 
+	// Calculate max zoom for raster based on file size
+	const nodeCount = dataset?.info.stats.nodes ?? 0
+	const rasterMaxZoom = useMemo(() => {
+		if (nodeCount <= FILE_SIZE_THRESHOLDS.FULL_VECTOR) return 0  // No raster needed
+		if (nodeCount <= FILE_SIZE_THRESHOLDS.HYBRID) return 8
+		return 10
+	}, [nodeCount])
+
 	const createdRef = useRef(false)
+
+	// Skip raster for small files
+	if (rasterMaxZoom === 0) return null
 
 	// ── STRUCTURAL EFFECT: create raster source + layer ──
 	useEffect(() => {
@@ -50,7 +63,7 @@ export function RasterLayer({ osmId }: RasterLayerProps) {
 				tiles: [osmixIdToRasterTileUrl(osmId)],
 				bounds,
 				minzoom: 0,
-				maxzoom: RASTER_MAX_ZOOM,  // Only load tiles up to zoom 8
+				maxzoom: rasterMaxZoom,  // Dynamic based on file size
 				tileSize: 256,
 			})
 
@@ -61,7 +74,7 @@ export function RasterLayer({ osmId }: RasterLayerProps) {
 				type: "raster",
 				source: sourceId,
 				minzoom: 0,
-				maxzoom: RASTER_MAX_ZOOM, // Only visible up to zoom 8
+				maxzoom: rasterMaxZoom, // Dynamic based on file size
 				paint: {
 					"raster-opacity": roadsVisible ? RASTER_OPACITY : 0,
 					"raster-fade-duration": 200,
@@ -94,7 +107,7 @@ export function RasterLayer({ osmId }: RasterLayerProps) {
 			try { if (map.getSource(sourceId)) map.removeSource(sourceId) } catch { /* */ }
 			createdRef.current = false
 		}
-	}, [mapInstance, osmId, sourceId, bounds])
+	}, [mapInstance, osmId, sourceId, bounds, rasterMaxZoom])
 
 	// ── REACTIVE EFFECT: update visibility ──
 	useEffect(() => {

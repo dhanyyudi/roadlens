@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useMap } from "react-map-gl/maplibre"
 import { useOsmStore } from "../../stores/osm-store"
-import { VECTOR_MIN_ZOOM } from "../../constants"
+import { FILE_SIZE_THRESHOLDS } from "../../constants"
 import { ZoomIn } from "lucide-react"
 
 export function ZoomNotification() {
@@ -9,6 +9,15 @@ export function ZoomNotification() {
 	const { current: mapInstance } = useMap()
 	const [currentZoom, setCurrentZoom] = useState<number | null>(null)
 	const [isVisible, setIsVisible] = useState(false)
+
+	// Calculate target zoom based on file size
+	const targetZoom = (() => {
+		if (!dataset) return 10
+		const nodes = dataset.info.stats.nodes
+		if (nodes <= FILE_SIZE_THRESHOLDS.FULL_VECTOR) return 0
+		if (nodes <= FILE_SIZE_THRESHOLDS.HYBRID) return 8
+		return 10
+	})()
 
 	useEffect(() => {
 		const map = mapInstance?.getMap()
@@ -20,8 +29,8 @@ export function ZoomNotification() {
 		const checkZoom = () => {
 			const zoom = map.getZoom()
 			setCurrentZoom(zoom)
-			// Show notification if zoom < VECTOR_MIN_ZOOM and dataset exists
-			setIsVisible(zoom < VECTOR_MIN_ZOOM)
+			// Show notification if zoom < targetZoom and target > 0
+			setIsVisible(targetZoom > 0 && zoom < targetZoom)
 		}
 
 		// Check initial zoom
@@ -33,7 +42,7 @@ export function ZoomNotification() {
 		return () => {
 			map.off("zoom", checkZoom)
 		}
-	}, [mapInstance, dataset])
+	}, [mapInstance, dataset, targetZoom])
 
 	if (!isVisible || !dataset) return null
 
@@ -63,11 +72,11 @@ export function ZoomNotification() {
 				</div>
 				<div style={{ fontSize: "12px", color: "#94a3b8", marginTop: "2px" }}>
 					Data {dataset.fileName} ({(dataset.info.stats.nodes / 1_000_000).toFixed(1)}M nodes) ter-load. 
-					Zoom ke level {VECTOR_MIN_ZOOM}+ untuk visualisasi.
+					{targetZoom > 0 ? `Zoom ke level ${targetZoom}+ untuk visualisasi detail.` : "Data siap untuk interaksi."}
 				</div>
-				{currentZoom !== null && (
+				{targetZoom > 0 && currentZoom !== null && (
 					<div style={{ fontSize: "11px", color: "#64748b", marginTop: "4px" }}>
-						Zoom saat ini: {currentZoom.toFixed(1)} / Target: {VECTOR_MIN_ZOOM}
+						Zoom saat ini: {currentZoom.toFixed(1)} / Target: {targetZoom}
 					</div>
 				)}
 			</div>
