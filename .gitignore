@@ -8,3 +8,9 @@ dist/
 .vscode/
 CLAUDE.md
 public/samples/denpasar_original.osm.pbf
+# Large media files
+public/gif/
+*.gif
+*.mp4
+*.mov
+*.avi
