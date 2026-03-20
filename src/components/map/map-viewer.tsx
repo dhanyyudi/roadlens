@@ -20,6 +20,7 @@ import { MapLegend } from "./map-legend"
 import { BBoxDrawLayer } from "./bbox-draw-layer"
 import { CursorCoordinates } from "./cursor-coordinates"
 import { ZoomNotification } from "./zoom-notification"
+import { VectorLoadingIndicator } from "./vector-loading-indicator"
 // Protocol imports ensure they're registered at module load time
 import "../../lib/osmix-vector-protocol"
 import "../../lib/osmix-raster-protocol"
@@ -350,6 +351,7 @@ export function MapViewer() {
 			</Map>
 			<CursorCoordinates />
 			<ZoomNotification />
+			<VectorLoadingIndicator />
 			<GeocodingOverlay />
 			<BasemapSwitcher />
 			<MapLegend />

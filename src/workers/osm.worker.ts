@@ -66,32 +66,47 @@ export class VizWorker extends OsmixWorker {
 		id: string,
 		tile: [number, number, number],
 	): ArrayBuffer {
+		console.log(`[worker] getVectorTile called: ${id}/${tile[2]}/${tile[0]}/${tile[1]}`)
+		
 		const cached = this.tileCache.get(id, tile)
 		if (cached) {
+			console.log(`[worker] Cache hit: ${id}/${tile[2]}/${tile[0]}/${tile[1]}`)
 			// Return a copy — transfer detaches the buffer
 			const copy = cached.slice(0)
 			return transfer(copy, [copy]) as unknown as ArrayBuffer
 		}
 
-		const encoder = (this as any).vtEncoders[id]
+		// Check if encoder exists
+		const encoders = (this as any).vtEncoders
+		console.log(`[worker] Available encoders: ${encoders ? Object.keys(encoders).join(', ') : 'none'}`)
+		
+		const encoder = encoders?.[id]
 		if (!encoder) {
-			console.warn(`[worker] No vtEncoder for ${id}`)
+			console.warn(`[worker] No vtEncoder for ${id}. Has osm data: ${!!this.get(id)}`)
 			return new ArrayBuffer(0)
 		}
 
+		const startTime = performance.now()
 		try {
+			console.log(`[worker] Generating tile: ${id}/${tile[2]}/${tile[0]}/${tile[1]}`)
 			const data = encoder.getTile(tile)
+			const duration = performance.now() - startTime
+			
 			if (!data || data.byteLength === 0) {
+				console.log(`[worker] Empty tile (${duration.toFixed(1)}ms): ${id}/${tile[2]}/${tile[0]}/${tile[1]}`)
 				// Empty tile is normal for tiles outside data bounds
 				return new ArrayBuffer(0)
 			}
 
+			console.log(`[worker] Generated tile (${duration.toFixed(1)}ms, ${data.byteLength} bytes): ${id}/${tile[2]}/${tile[0]}/${tile[1]}`)
+			
 			// Cache the original, transfer a copy
 			this.tileCache.set(id, tile, data)
 			const copy = data.slice(0)
 			return transfer(copy, [copy]) as unknown as ArrayBuffer
 		} catch (err) {
-			console.error(`[worker] Error generating vector tile ${id}/${tile[2]}/${tile[0]}/${tile[1]}:`, err)
+			const duration = performance.now() - startTime
+			console.error(`[worker] Error (${duration.toFixed(1)}ms) generating tile ${id}/${tile[2]}/${tile[0]}/${tile[1]}:`, err)
 			return new ArrayBuffer(0)
 		}
 	}

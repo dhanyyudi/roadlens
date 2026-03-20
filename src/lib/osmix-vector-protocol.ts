@@ -24,26 +24,40 @@ export function addOsmixVectorProtocol() {
 			if (!match) throw new Error(`Bad @osmix/vector URL: ${req.url}`)
 			const [, osmId, zStr, xStr, yStr] = match
 			const tileIndex: Tile = [+xStr!, +yStr!, +zStr!]
-			const remote = getOsmRemote()
-			if (!remote || abortController.signal.aborted) return { data: null }
 			
+			console.log(`[vector-protocol] Request: ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`)
+			
+			const remote = getOsmRemote()
+			if (!remote) {
+				console.warn(`[vector-protocol] No remote available for ${osmId}`)
+				return { data: null }
+			}
+			if (abortController.signal.aborted) {
+				console.log(`[vector-protocol] Aborted: ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`)
+				return { data: null }
+			}
+			
+			const startTime = performance.now()
 			try {
 				const data = await remote.getVectorTile(
 					decodeURIComponent(osmId!),
 					tileIndex,
 				)
+				const duration = performance.now() - startTime
 				
 				if (!data || data.byteLength === 0) {
-					console.warn(`[vector] Empty tile: ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`)
+					console.warn(`[vector-protocol] Empty tile (${duration.toFixed(1)}ms): ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`)
 					return { data: null }
 				}
 
+				console.log(`[vector-protocol] Success (${duration.toFixed(1)}ms, ${data.byteLength} bytes): ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`)
 				return {
 					data: abortController.signal.aborted ? null : data,
 					cacheControl: "no-cache",
 				}
 			} catch (err) {
-				console.error(`[vector] Error loading tile: ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`, err)
+				const duration = performance.now() - startTime
+				console.error(`[vector-protocol] Error (${duration.toFixed(1)}ms): ${osmId}/${tileIndex[2]}/${tileIndex[0]}/${tileIndex[1]}`, err)
 				return { data: null }
 			}
 		},
