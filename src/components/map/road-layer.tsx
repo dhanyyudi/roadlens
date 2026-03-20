@@ -6,7 +6,7 @@ import type {
 } from "maplibre-gl"
 import { zigzag } from "@osmix/shared/zigzag"
 import { osmixIdToTileUrl } from "../../lib/osmix-vector-protocol"
-import { MIN_PICKABLE_ZOOM } from "../../constants"
+import { VECTOR_MIN_ZOOM, VECTOR_MAX_ZOOM } from "../../constants"
 import { useUIStore } from "../../stores/ui-store"
 import { useOsmStore } from "../../stores/osm-store"
 import { useSpeedStore } from "../../stores/speed-store"
@@ -260,8 +260,8 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				type: "vector",
 				tiles: [osmixIdToTileUrl(osmId)],
 				bounds,
-				minzoom: MIN_PICKABLE_ZOOM,
-				maxzoom: 14,
+				minzoom: VECTOR_MIN_ZOOM,
+				maxzoom: VECTOR_MAX_ZOOM,
 			})
 
 			// === CASING (outline) for solid roads ===

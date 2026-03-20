@@ -8,6 +8,7 @@ import { useUIStore } from "../../stores/ui-store"
 import { useRoutingStore } from "../../stores/routing-store"
 import { useOsm } from "../../hooks/use-osm"
 import { RoadLayer } from "./road-layer"
+import { RasterLayer } from "./raster-layer"
 import { RestrictionLayer } from "./restriction-layer"
 import { AccessLayer } from "./access-layer"
 import { SpeedLayer } from "./speed-layer"
@@ -18,8 +19,9 @@ import { BasemapSwitcher } from "./basemap-switcher"
 import { MapLegend } from "./map-legend"
 import { BBoxDrawLayer } from "./bbox-draw-layer"
 import { CursorCoordinates } from "./cursor-coordinates"
-// Protocol import ensures it's registered at module load time
+// Protocol imports ensure they're registered at module load time
 import "../../lib/osmix-vector-protocol"
+import "../../lib/osmix-raster-protocol"
 
 const SNAP_RADIUS_M = 1_000
 
@@ -331,6 +333,7 @@ export function MapViewer() {
 			>
 				{dataset && (
 					<>
+						<RasterLayer osmId={dataset.osmId} />
 						<RoadLayer osmId={dataset.osmId} />
 						<RestrictionLayer osmId={dataset.osmId} />
 						<AccessLayer osmId={dataset.osmId} />
