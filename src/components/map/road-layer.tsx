@@ -1,3 +1,4 @@
+
 import { useMemo, useEffect, useCallback, useRef } from "react"
 import { useMap } from "react-map-gl/maplibre"
 import type {
@@ -267,6 +268,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 		const create = () => {
 			console.log(`[RoadLayer] Creating source and layers for ${osmId}, bounds:`, bounds)
+			console.log(`[RoadLayer] Current map zoom: ${map.getZoom()}`)
 			
 			// Clean up any existing
 			for (const id of allLayerIds(osmId)) {
@@ -278,6 +280,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 			const tileUrl = osmixIdToTileUrl(osmId)
 			console.log(`[RoadLayer] Vector tile URL: ${tileUrl}`)
+			console.log(`[RoadLayer] Source config: minzoom=${vectorMinZoom}, maxzoom=${VECTOR_MAX_ZOOM}, bounds=`, bounds)
 
 			map.addSource(sourceId, {
 				type: "vector",
@@ -601,18 +604,25 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 		}
 		map.on("style.load", onStyleLoad)
 		
-		// Debug: listen for source data events
+		// Debug: listen for source data events - ALL data types
 		const onSourceData = (e: MapSourceDataEvent) => {
-			if (e.sourceId === sourceId && e.dataType === 'source') {
+			if (e.sourceId === sourceId) {
 				const tileInfo = e.tile ? `${e.tile.x}/${e.tile.y}/${e.tile.z}` : 'none'
-				console.log(`[RoadLayer] Source data: ${e.sourceId}, loaded: ${e.isSourceLoaded}, tile: ${tileInfo}`)
+				console.log(`[RoadLayer] SourceData: dataType=${e.dataType}, loaded=${e.isSourceLoaded}, tile=${tileInfo}`)
 			}
 		}
 		map.on("sourcedata", onSourceData)
+		
+		// Debug: listen for all errors
+		const onError = (e: any) => {
+			console.error(`[RoadLayer] Map error:`, e.error || e)
+		}
+		map.on("error", onError)
 
 		return () => {
 			map.off("style.load", onStyleLoad)
 			map.off("sourcedata", onSourceData)
+			map.off("error", onError)
 			// Remove on unmount
 			for (const id of allLayerIds(osmId)) {
 				try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
