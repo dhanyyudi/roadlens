@@ -110,6 +110,23 @@ Generate SQL query:
 `.trim();
 }
 
+function buildSimplePrompt(userQuery) {
+  return `Convert to DuckDB SQL. Return ONLY SQL, no explanation.
+
+Table: roads(id BIGINT, name VARCHAR, highway VARCHAR, length_meters DOUBLE, tags JSON)
+
+Common queries:
+- "berapa jalan tol" → SELECT COUNT(*) as total FROM roads WHERE highway = 'motorway';
+- "jalur sepeda" → SELECT * FROM roads WHERE highway = 'cycleway';
+- "bisa digunakan oleh sepeda" → SELECT * FROM roads WHERE highway = 'cycleway' OR tags->>'bicycle' = 'yes';
+- "trotoar" → SELECT * FROM roads WHERE highway = 'footway';
+
+Query: "${userQuery}"
+
+SQL:
+`.trim();
+}
+
 export default async function handler(req, res) {
   // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -174,14 +191,32 @@ export default async function handler(req, res) {
     });
     
     // Build and send prompt
-    const fullPrompt = buildPrompt(prompt);
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    const text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    let fullPrompt = buildPrompt(prompt);
+    let result = await model.generateContent(fullPrompt);
+    let response = await result.response;
+    let text = response.candidates?.[0]?.content?.parts?.[0]?.text;
     
-    if (!text) {
-      res.status(500).json({ error: 'Empty response from AI' });
-      return;
+    // Retry with simpler prompt if empty response
+    if (!text || text.trim().length === 0) {
+      console.log('[AI Query] Empty response, retrying with simpler prompt...');
+      fullPrompt = buildSimplePrompt(prompt);
+      result = await model.generateContent(fullPrompt);
+      response = await result.response;
+      text = response.candidates?.[0]?.content?.parts?.[0]?.text;
+    }
+    
+    // Final fallback if still empty
+    if (!text || text.trim().length === 0) {
+      console.log('[AI Query] Still empty, using fallback query');
+      // Fallback: SELECT * with pattern match on name/tags if contains keywords
+      const lowerPrompt = prompt.toLowerCase();
+      if (lowerPrompt.includes('sepeda') || lowerPrompt.includes('bike') || lowerPrompt.includes('bicycle') || lowerPrompt.includes('cycleway')) {
+        text = "SELECT * FROM roads WHERE highway = 'cycleway';";
+      } else if (lowerPrompt.includes('pejalan') || lowerPrompt.includes('walk') || lowerPrompt.includes('foot') || lowerPrompt.includes('trotoar')) {
+        text = "SELECT * FROM roads WHERE highway = 'footway';";
+      } else {
+        text = "SELECT * FROM roads LIMIT 100;";
+      }
     }
     
     // Clean SQL

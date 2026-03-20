@@ -181,6 +181,22 @@ SQL: SELECT * FROM roads WHERE highway = 'residential' AND tags->>'oneway' = 'ye
 
 User: "unnamed tracks longer than 1km"
 SQL: SELECT * FROM roads WHERE highway = 'track' AND name IS NULL AND length_meters > 1000;
+
+-- Bicycle/pedestrian access queries
+User: "apakah ada jalan yang bisa digunakan oleh sepeda?"
+SQL: SELECT COUNT(*) as total FROM roads WHERE highway = 'cycleway';
+
+User: "jalur sepeda"
+SQL: SELECT * FROM roads WHERE highway = 'cycleway';
+
+User: "jalan yang boleh dilewati sepeda"
+SQL: SELECT * FROM roads WHERE highway = 'cycleway' OR tags->>'bicycle' = 'yes';
+
+User: "jalur pejalan kaki"
+SQL: SELECT * FROM roads WHERE highway = 'footway';
+
+User: "jalan untuk trotoar"
+SQL: SELECT * FROM roads WHERE highway = 'footway';
 `.trim()
 
 /**
