@@ -3,16 +3,19 @@ import type { QueryMessage } from '@/stores/ai-query-store'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Card } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { User, Bot, AlertTriangle, Info, MapPin, Calculator } from 'lucide-react'
+import { User, Bot, AlertTriangle, Info, MapPin, Calculator, BarChart3, List } from 'lucide-react'
 
 interface ChatMessageProps {
 	message: QueryMessage
 }
 
 // Detect query type from SQL
-function detectQueryType(sql?: string): 'count' | 'aggregate' | 'select' {
+function detectQueryType(sql?: string): 'count' | 'aggregate' | 'group' | 'select' {
 	if (!sql) return 'select'
 	const upperSQL = sql.toUpperCase()
+	if (upperSQL.includes('GROUP BY')) {
+		return 'group'
+	}
 	if (upperSQL.includes('COUNT(*)') || upperSQL.includes('COUNT(')) {
 		return 'count'
 	}
@@ -20,6 +23,20 @@ function detectQueryType(sql?: string): 'count' | 'aggregate' | 'select' {
 		return 'aggregate'
 	}
 	return 'select'
+}
+
+// Get badge config based on query type
+function getBadgeConfig(type: 'count' | 'aggregate' | 'group' | 'select') {
+	switch (type) {
+		case 'count':
+			return { icon: Calculator, label: 'Hitung', variant: 'secondary' as const }
+		case 'aggregate':
+			return { icon: BarChart3, label: 'Statistik', variant: 'secondary' as const }
+		case 'group':
+			return { icon: BarChart3, label: 'Kelompok', variant: 'secondary' as const }
+		default:
+			return { icon: List, label: 'Data', variant: 'secondary' as const }
+	}
 }
 
 export function ChatMessage({ message }: ChatMessageProps) {
@@ -31,7 +48,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
 	const isSystem = role === 'system'
 
 	const queryType = detectQueryType(sql)
-	const isCountOrAggregate = queryType === 'count' || queryType === 'aggregate'
+	const isCountOrAggregate = queryType === 'count' || queryType === 'aggregate' || queryType === 'group'
+	const badgeConfig = getBadgeConfig(queryType)
+	const BadgeIcon = badgeConfig.icon
 
 	return (
 		<div className={`flex gap-3 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -68,15 +87,19 @@ export function ChatMessage({ message }: ChatMessageProps) {
 					{/* Results Summary */}
 					{results && !results.error && (
 						<div className="mt-2 flex items-center gap-2 flex-wrap">
-							{/* For count/aggregate, show calculator icon */}
-							{isCountOrAggregate ? (
-								<Badge variant="secondary" className="text-xs flex items-center gap-1">
-									<Calculator className="w-3 h-3" />
-									{queryType === 'count' ? 'Count' : 'Aggregate'}
-								</Badge>
-							) : (
-								<Badge variant="secondary" className="text-xs">
-									{results.rowCount} rows
+							{/* Query type badge */}
+							<Badge 
+								variant={badgeConfig.variant} 
+								className="text-xs flex items-center gap-1"
+							>
+								<BadgeIcon className="w-3 h-3" />
+								{badgeConfig.label}
+							</Badge>
+							
+							{/* Row count for non-count queries */}
+							{!isCountOrAggregate && (
+								<Badge variant="outline" className="text-xs">
+									{results.rowCount} baris
 								</Badge>
 							)}
 							
@@ -88,7 +111,7 @@ export function ChatMessage({ message }: ChatMessageProps) {
 							{!isCountOrAggregate && results.rowCount > 0 && (
 								<Badge variant="default" className="text-xs flex items-center gap-1">
 									<MapPin className="w-3 h-3" />
-									Shown on map
+									Tampil di peta
 								</Badge>
 							)}
 						</div>

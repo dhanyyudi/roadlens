@@ -4,6 +4,7 @@ import { useAIQueryStore, type QueryResults } from '@/stores/ai-query-store'
 import { naturalLanguageToSQL } from '@/services/ai/vertex-ai'
 import { useDuckDB } from './use-duckdb'
 import { useOsmDuckDBSync } from './use-osm-duckdb-sync'
+import { detectQueryIntent, mapRoadType } from '@/services/ai/prompt-builder'
 
 export interface UseAIQueryReturn {
 	// State
@@ -28,8 +29,11 @@ export interface UseAIQueryReturn {
 }
 
 // Detect query type from SQL
-function detectQueryType(sql: string): 'count' | 'aggregate' | 'select' {
+function detectQueryType(sql: string): 'count' | 'aggregate' | 'select' | 'group' {
 	const upperSQL = sql.toUpperCase()
+	if (upperSQL.includes('GROUP BY')) {
+		return 'group'
+	}
 	if (upperSQL.includes('COUNT(*)') || upperSQL.includes('COUNT(')) {
 		return 'count'
 	}
@@ -39,20 +43,60 @@ function detectQueryType(sql: string): 'count' | 'aggregate' | 'select' {
 	return 'select'
 }
 
-// Format result message based on query type
-function formatResultMessage(queryType: 'count' | 'aggregate' | 'select', results: QueryResults): string {
+// Extract highway type from SQL for user-friendly messages
+function extractRoadType(sql: string): string | null {
+	const match = sql.match(/highway\s*=\s*['"]([^'"]+)['"]/i)
+	return match ? match[1] : null
+}
+
+// Format road type for display
+function formatRoadType(type: string | null): string {
+	if (!type) return 'jalan'
+	
+	const typeNames: Record<string, string> = {
+		'motorway': 'jalan tol',
+		'trunk': 'jalan trunk',
+		'primary': 'jalan utama',
+		'secondary': 'jalan sekunder',
+		'tertiary': 'jalan tersier',
+		'residential': 'jalan perumahan',
+		'service': 'jalan service',
+		'unclassified': 'jalan tak terklasifikasi',
+		'track': 'jalan tanah',
+		'path': 'jalur setapak',
+		'footway': 'trotoar',
+		'cycleway': 'jalur sepeda',
+		'steps': 'tangga',
+	}
+	
+	return typeNames[type] || type
+}
+
+// Format result message based on query type with bilingual support
+function formatResultMessage(queryType: 'count' | 'aggregate' | 'select' | 'group', results: QueryResults, sql: string): string {
 	if (results.error) {
 		return `Query failed: ${results.error}`
 	}
 
+	const roadType = formatRoadType(extractRoadType(sql))
+
 	if (queryType === 'count') {
-		// For COUNT queries, show the actual count value
-		const count = results.sampleData?.[0]?.count || results.sampleData?.[0]?.total || results.rowCount || 0
-		return `Found **${count}** roads matching your query.`
+		const count = results.sampleData?.[0]?.count || results.sampleData?.[0]?.total || 0
+		if (count === 0) {
+			return `Tidak ditemukan ${roadType} yang sesuai.`
+		}
+		return `Ditemukan **${count}** ${roadType}.`
+	}
+
+	if (queryType === 'group') {
+		const count = results.rowCount
+		if (count === 0) {
+			return `Tidak ada data yang ditemukan.`
+		}
+		return `Menampilkan statistik untuk **${count}** kategori jalan.`
 	}
 
 	if (queryType === 'aggregate') {
-		// For aggregate queries, show the result
 		if (results.sampleData && results.sampleData.length > 0) {
 			const row = results.sampleData[0] as Record<string, number | string>
 			const entries = Object.entries(row)
@@ -60,24 +104,28 @@ function formatResultMessage(queryType: 'count' | 'aggregate' | 'select', result
 				.map(([key, value]) => {
 					const numVal = Number(value)
 					if (!isNaN(numVal)) {
+						// Format meters to km if large
+						if (numVal > 1000) {
+							return `${key}: ${(numVal / 1000).toFixed(2)} km`
+						}
 						return `${key}: ${numVal.toFixed(2)}`
 					}
 					return `${key}: ${value}`
 				})
 				.join(', ')
-			return `Result: ${entries}`
+			return `Hasil: ${entries}`
 		}
-		return `Query completed with ${results.rowCount} result(s).`
+		return `Query selesai dengan ${results.rowCount} hasil.`
 	}
 
 	// For SELECT queries
 	if (results.rowCount === 0) {
-		return 'No roads found matching your query.'
+		return `Tidak ditemukan ${roadType} yang sesuai.`
 	}
 	if (results.rowCount === 1) {
-		return 'Found 1 road matching your query.'
+		return `Ditemukan 1 ${roadType}.`
 	}
-	return `Found ${results.rowCount} roads matching your query.`
+	return `Ditemukan ${results.rowCount} ${roadType}.`
 }
 
 export function useAIQuery(): UseAIQueryReturn {
@@ -132,9 +180,13 @@ export function useAIQuery(): UseAIQueryReturn {
 		async (prompt: string) => {
 			if (!prompt.trim()) return
 			if (!isDataReady) {
-				store.addErrorMessage('Please load OSM data first before using AI Query.')
+				store.addErrorMessage('Silakan load data OSM terlebih dahulu sebelum menggunakan AI Query.')
 				return
 			}
+
+			// Pre-detect intent for logging/debugging
+			const intent = detectQueryIntent(prompt)
+			console.log('[AI Query] Detected intent:', intent)
 
 			// Add user message
 			store.addUserMessage(prompt)
@@ -158,16 +210,17 @@ export function useAIQuery(): UseAIQueryReturn {
 
 				// Detect query type
 				const queryType = detectQueryType(result.sql)
+				console.log('[AI Query] Query type:', queryType)
 
 				// Auto-execute immediately
 				const execResult = await executeSQL(result.sql)
 
 				if (execResult.error) {
-					store.addErrorMessage(`Query failed: ${execResult.error}`)
+					store.addErrorMessage(`Query gagal: ${execResult.error}`)
 					store.setStatus('error')
 				} else {
 					// Format message based on query type
-					const summary = formatResultMessage(queryType, execResult)
+					const summary = formatResultMessage(queryType, execResult, result.sql)
 					
 					store.addAssistantMessage(
 						summary,
@@ -177,7 +230,7 @@ export function useAIQuery(): UseAIQueryReturn {
 					store.setStatus('completed')
 				}
 			} catch (error) {
-				store.addErrorMessage('Failed to process query. Please try again.')
+				store.addErrorMessage('Gagal memproses query. Silakan coba lagi.')
 				store.setStatus('error')
 			}
 		},
