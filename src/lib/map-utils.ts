@@ -15,11 +15,14 @@ export function generateStreetViewURL(lat: number, lon: number): string {
 	const latDMS = decimalToDMS(lat, lat >= 0 ? 'N' : 'S')
 	const lonDMS = decimalToDMS(lon, lon >= 0 ? 'E' : 'W')
 	
-	// Encode for URL
-	const locationTitle = encodeURIComponent(`${latDMS}+${lonDMS}`)
+	// Encode each part separately, then combine with + (not %2B)
+	const latEncoded = encodeURIComponent(latDMS)
+	const lonEncoded = encodeURIComponent(lonDMS)
+	const locationTitle = `${latEncoded}+${lonEncoded}`
 	
-	// Format lengkap: /place/{DMS}/@lat,lon,3a,75y,heading,90t
-	return `https://www.google.com/maps/place/${locationTitle}/@${lat.toFixed(7)},${lon.toFixed(7)},3a,75y,0h,90t`
+	// Format lengkap: /place/{DMS}/@lat,lon,3a,75y,heading,90t/data=...
+	// Note: /data=!3m7!1e1 parameter forces Street View mode
+	return `https://www.google.com/maps/place/${locationTitle}/@${lat.toFixed(7)},${lon.toFixed(7)},3a,75y,0h,90t/data=!3m7!1e1!3m5!1e0!2e0!4m2!3m1!1s0x0:0x0`
 }
 
 /**
