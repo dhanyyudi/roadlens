@@ -81,7 +81,13 @@ function formatResultMessage(queryType: 'count' | 'aggregate' | 'select' | 'grou
 	const roadType = formatRoadType(extractRoadType(sql))
 
 	if (queryType === 'count') {
-		const count = results.sampleData?.[0]?.count || results.sampleData?.[0]?.total || 0
+		// Extract count from result - DuckDB might return as 'total', 'count', 'count_star()', etc
+		const row = results.sampleData?.[0] as Record<string, number> | undefined
+		let count = 0
+		if (row) {
+			// Try different possible column names
+			count = row.total ?? row.count ?? row.count_star?.() ?? Object.values(row)[0] ?? 0
+		}
 		if (count === 0) {
 			return `Tidak ditemukan ${roadType} yang sesuai.`
 		}

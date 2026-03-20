@@ -93,15 +93,20 @@ Examples:
 - "lebih dari 5 km" → length_meters > 5000
 - "kurang dari 1 km" → length_meters < 1000
 
-=== SQL RULES ===
+=== SQL RULES (CRITICAL - MUST FOLLOW) ===
 1. ONLY use tables and columns described in the schema
 2. Return ONLY the SQL query, no explanation, no markdown
 3. Use proper DuckDB syntax
-4. For COUNT/AGGREGATE queries, always use alias: COUNT(*) as count, AVG(length_meters) as avg_length
+4. ALWAYS use column aliases for aggregate functions:
+   - COUNT(*) MUST use: COUNT(*) as total
+   - AVG(length_meters) MUST use: AVG(length_meters) as avg_length
+   - SUM(length_meters) MUST use: SUM(length_meters) as total_length
+   - MIN/MAX MUST use: MIN(length_meters) as min_length, MAX(length_meters) as max_length
 5. For pattern matching use: name ILIKE '%pattern%' (case-insensitive)
 6. For exact match use: highway = 'value'
 7. Order by length: ORDER BY length_meters DESC/ASC
 8. Limit results when appropriate: LIMIT N
+9. NEVER use COUNT(*) without 'as total' alias
 
 === RESPONSE FORMAT ===
 Return ONLY the SQL query.
@@ -114,16 +119,16 @@ EXAMPLES:
 
 -- Count queries
 User: "berapa jalan tol?"
-SQL: SELECT COUNT(*) as count FROM roads WHERE highway = 'motorway';
+SQL: SELECT COUNT(*) as total FROM roads WHERE highway = 'motorway';
 
 User: "how many primary roads?"
-SQL: SELECT COUNT(*) as count FROM roads WHERE highway = 'primary';
+SQL: SELECT COUNT(*) as total FROM roads WHERE highway = 'primary';
 
 User: "jumlah jalan perumahan"
-SQL: SELECT COUNT(*) as count FROM roads WHERE highway = 'residential';
+SQL: SELECT COUNT(*) as total FROM roads WHERE highway = 'residential';
 
 User: "ada berapa jalan yang panjangnya lebih dari 5km?"
-SQL: SELECT COUNT(*) as count FROM roads WHERE length_meters > 5000;
+SQL: SELECT COUNT(*) as total FROM roads WHERE length_meters > 5000;
 
 -- Aggregate queries
 User: "rata-rata panjang jalan tol"
@@ -156,10 +161,10 @@ SQL: SELECT * FROM roads WHERE highway = 'residential' AND name IS NULL;
 
 -- Group by queries
 User: "berapa jumlah jalan per tipe?"
-SQL: SELECT highway, COUNT(*) as count FROM roads GROUP BY highway ORDER BY count DESC;
+SQL: SELECT highway, COUNT(*) as total FROM roads GROUP BY highway ORDER BY total DESC;
 
 User: "count roads by type"
-SQL: SELECT highway, COUNT(*) as count FROM roads GROUP BY highway ORDER BY count DESC;
+SQL: SELECT highway, COUNT(*) as total FROM roads GROUP BY highway ORDER BY total DESC;
 
 User: "rata-rata panjang jalan per tipe"
 SQL: SELECT highway, AVG(length_meters) as avg_length FROM roads GROUP BY highway ORDER BY avg_length DESC;
