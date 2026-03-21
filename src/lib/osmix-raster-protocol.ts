@@ -27,10 +27,10 @@ export function addOsmixRasterProtocol() {
 			const [, osmId, zStr, xStr, yStr] = match
 			const tile: Tile = [+xStr!, +yStr!, +zStr!]
 			const zoom = +zStr!
-			
-			// Only generate raster tiles for zoom 0-8
-			// Higher zooms should use vector tiles
-			if (zoom >= 9) {
+
+			// Generate raster tiles for zoom 0-10 max
+			// Zoom 11+ should use vector tiles (or upscaled raster from zoom 10)
+			if (zoom >= 11) {
 				return { data: null }
 			}
 			

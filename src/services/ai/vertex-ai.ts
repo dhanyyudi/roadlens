@@ -2,6 +2,7 @@
 // This file runs in browser, NO API keys here!
 
 import { validatePrompt } from './guardrails'
+import { naturalLanguageToSQLLocal } from './local-nl2sql'
 
 export interface NL2SQLResult {
 	sql: string
@@ -55,6 +56,13 @@ export async function naturalLanguageToSQL(
 			}),
 		})
 
+		// Check if response is OK before parsing JSON
+		if (!response.ok) {
+			// API error - fall back to local parsing
+			console.log('[AI Query] API error, using local parser...')
+			return naturalLanguageToSQLLocal(query)
+		}
+
 		const data = await response.json()
 
 		if (!response.ok) {
@@ -75,17 +83,9 @@ export async function naturalLanguageToSQL(
 	} catch (error: any) {
 		console.error('AI query error:', error)
 
-		if (error.name === 'TypeError' && error.message.includes('fetch')) {
-			return {
-				sql: '',
-				error: 'Network error. Please check your connection.',
-			}
-		}
-
-		return {
-			sql: '',
-			error: `Request failed: ${error.message || 'Unknown error'}`,
-		}
+		// Any error - fall back to local parser
+		console.log('[AI Query] Network/parse error, using local parser...')
+		return naturalLanguageToSQLLocal(query)
 	}
 }
 

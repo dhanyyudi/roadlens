@@ -37,7 +37,8 @@ export function RasterLayer({ osmId }: RasterLayerProps) {
 	const rasterMaxZoom = useMemo(() => {
 		if (nodeCount <= FILE_SIZE_THRESHOLDS.FULL_VECTOR) return 0  // No raster needed
 		if (nodeCount <= FILE_SIZE_THRESHOLDS.HYBRID) return 8
-		return 11  // Extended for smooth transition with vector
+		if (nodeCount <= FILE_SIZE_THRESHOLDS.COUNTRY) return 11  // 2M-10M: covers up to vectorMinZoom 10
+		return 13  // > 10M: covers up to vectorMinZoom 12
 	}, [nodeCount])
 
 	const createdRef = useRef(false)

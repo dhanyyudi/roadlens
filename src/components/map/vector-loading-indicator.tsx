@@ -21,7 +21,8 @@ export function VectorLoadingIndicator() {
 		const nodes = dataset.info.stats.nodes
 		if (nodes <= FILE_SIZE_THRESHOLDS.FULL_VECTOR) return 0
 		if (nodes <= FILE_SIZE_THRESHOLDS.HYBRID) return 8
-		return 10
+		if (nodes <= FILE_SIZE_THRESHOLDS.COUNTRY) return 10
+		return 12
 	})()
 
 	useEffect(() => {

@@ -1,6 +1,16 @@
 import { OsmChangeset, applyChangesetToOsm } from "@osmix/change"
 import { expose, transfer } from "comlink"
 import { OsmixWorker } from "osmix"
+import {
+	executeStreamingQuery,
+	executeCountQuery,
+	executeAggregateQuery,
+	parseNaturalLanguageQuery,
+	type QueryFilter,
+	type QueryOptions,
+	type QueryResult,
+	type RoadRecord,
+} from "./query-processor"
 
 /**
  * Simple LRU tile cache to avoid re-encoding identical tiles.
@@ -486,6 +496,47 @@ export class VizWorker extends OsmixWorker {
 		const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 		
 		return R * c
+	}
+
+	/**
+	 * Execute streaming query on roads data
+	 * Returns results in batches to avoid memory issues
+	 */
+	async executeQuery(
+		osmId: string,
+		filter: QueryFilter,
+		options: QueryOptions = {},
+	): Promise<QueryResult> {
+		const roads = this.exportRoadsData(osmId)
+		return executeStreamingQuery(roads, filter, options)
+	}
+
+	/**
+	 * Execute count query (faster for large datasets)
+	 */
+	async executeCount(osmId: string, filter: QueryFilter): Promise<number> {
+		const roads = this.exportRoadsData(osmId)
+		return executeCountQuery(roads, filter)
+	}
+
+	/**
+	 * Execute aggregate query (SUM, AVG, etc)
+	 */
+	async executeAggregate(
+		osmId: string,
+		filter: QueryFilter,
+		aggregate: 'sum' | 'avg' | 'min' | 'max',
+		field: 'length_meters',
+	): Promise<number> {
+		const roads = this.exportRoadsData(osmId)
+		return executeAggregateQuery(roads, filter, aggregate, field)
+	}
+
+	/**
+	 * Parse natural language to query filter
+	 */
+	parseQuery(query: string): QueryFilter {
+		return parseNaturalLanguageQuery(query)
 	}
 }
 

@@ -17,7 +17,7 @@ Now, the crazy part: **OSMRoad opens this encyclopedia directly in your browser*
 ### The Problem
 OSM PBF files can be HUGE:
 - City-level: ~50-200 MB
-- Country-level: ~1-5 GB
+- Country-level: ~1-5 GB  
 - Full planet: ~70+ GB
 
 Your browser typically struggles with files larger than a few hundred MBs. So how do we handle this?
@@ -77,9 +77,24 @@ When you zoom into a city, you don't need to see roads in other countries. We us
 
 It's like Google Maps: as you pan and zoom, new tiles load. But instead of downloading images, we download **raw road data** that gets rendered beautifully on your GPU.
 
+#### Step 5: Memory Management (Don't Crash the Browser!)
+
+**Tech: Dynamic throttling + Worker-based queries**
+
+For **large files** (Thailand-size with 24M+ nodes, 2.8M+ roads):
+- **Skip DuckDB sync** — Would use too much memory
+- **Use Worker queries** — Streaming batch processing (10K roads per batch)
+- **Max zoom limit** — Large files capped at zoom 12 to prevent tile overload
+- **Memory monitor** — Live memory usage display with warnings
+
+```
+Small files (<50K roads):  DuckDB + SQL queries
+Large files (>50K roads):  Worker streaming queries (no DuckDB)
+```
+
 ---
 
-## 2. AI-Powered Natural Language Queries (NEW!)
+## 2. AI-Powered Natural Language Queries (UPDATED!)
 
 ### The Problem
 SQL is powerful but intimidating. Most users don't know how to write:
@@ -89,9 +104,9 @@ SELECT highway, COUNT(*) FROM roads GROUP BY highway;
 
 But they CAN ask: **"How many roads of each type are there?"**
 
-### The Solution: Natural Language to SQL
+### The Solution: Natural Language to SQL (with Fallback!)
 
-**Tech: Google Vertex AI (Gemini) + DuckDB-wasm**
+**Tech: Google Vertex AI (Gemini) + Local Parser + DuckDB-wasm/Worker Queries**
 
 #### Architecture
 
@@ -100,31 +115,55 @@ But they CAN ask: **"How many roads of each type are there?"**
 │   Browser   │ →  │  Vercel Server   │ →  │ Vertex AI   │
 │  (User)     │    │  (Edge Function) │    │ (Gemini)    │
 └─────────────┘    └──────────────────┘    └─────────────┘
-      ↑                                            ↓
-      └────────────── Return SQL ←─────────────────┘
-                           ↓
-              ┌─────────────────────┐
-              │ DuckDB-wasm (Client)│
-              │ Execute SQL         │
-              └─────────────────────┘
+      │   ↓                                           │
+      │   └─────────── Local Parser Fallback ─────────┘
+      │                    ↓
+      └────────────────────┘
+               ↓
+   ┌─────────────────────────────┐
+   │ Small files: DuckDB-wasm    │
+   │ Large files: Worker queries │
+   └─────────────────────────────┘
 ```
 
 #### How It Works
 
 1. **User types question** (e.g., "berapa jalan tol?")
-2. **Prompt engineering**: We send context (schema, examples, rules) + user query to Vertex AI
-3. **AI generates SQL**: `SELECT COUNT(*) as total FROM roads WHERE highway = 'motorway'`
-4. **Execute on DuckDB**: Client-side SQL execution
-5. **Highlight on map**: Results shown in amber/yellow with auto-zoom
+2. **Try API first**: Send to Vertex AI via Vercel Edge Function
+3. **API fails?** (404, network error, etc.) → Fall back to **local parser**
+4. **Generate SQL**: `SELECT COUNT(*) as total FROM roads WHERE highway = 'motorway'`
+5. **Execute query**:
+   - Small files: DuckDB-wasm client-side SQL
+   - Large files: Worker streaming queries
+6. **Highlight on map**: Results shown in amber/yellow with auto-zoom
+
+#### Local Parser (Offline Support!)
+
+When API unavailable, local parser handles common queries:
+
+| User Query | SQL Generated |
+|------------|---------------|
+| "Berapa jalan tol?" | `SELECT COUNT(*) FROM roads WHERE highway = 'motorway'` |
+| "Tampilkan jalan utama" | `SELECT * FROM roads WHERE highway = 'primary'` |
+| "Total panjang jalan" | `SELECT SUM(length_meters) FROM roads` |
+| "Rata-rata panjang jalan tol" | `SELECT AVG(length_meters) FROM roads WHERE highway = 'motorway'` |
+
+**Supported query types:**
+- COUNT queries — "berapa", "count", "jumlah"
+- SELECT queries — "tampilkan", "show", "cari"
+- AGGREGATE queries — "total", "average", "rata-rata"
+- GROUP queries — "group by", "kelompokkan"
 
 #### Bilingual Support
 
-The AI understands both **English** and **Indonesian**:
+Both **English** and **Indonesian** are supported:
+
 | English | Indonesian | SQL Generated |
 |---------|-----------|---------------|
 | "How many motorways?" | "Berapa jalan tol?" | `SELECT COUNT(*) FROM roads WHERE highway = 'motorway'` |
 | "Show primary roads" | "Tampilkan jalan utama" | `SELECT * FROM roads WHERE highway = 'primary'` |
 | "Average road length" | "Rata-rata panjang jalan" | `SELECT AVG(length_meters) FROM roads` |
+| "Total length of roads" | "Total panjang jalan" | `SELECT SUM(length_meters) FROM roads` |
 
 #### Smart Query Detection
 
@@ -133,12 +172,25 @@ The system detects query types and shows appropriate responses:
 - **AGGREGATE** → Shows statistics (e.g., "avg_length: 1,234m")
 - **SELECT** → Highlights roads on map + auto-zoom
 
-#### Security
+#### Worker-Based Queries for Large Files
 
-- Service Account JSON is **server-side only** (Vercel Edge Function)
-- Prompt injection detection & blocking
-- SQL validation before execution
-- Rate limiting: 10 queries/minute per client
+For large files (>50K roads), we skip DuckDB and use worker streaming:
+
+```typescript
+// Process in batches to avoid memory issues
+for (let i = 0; i < roads.length; i += batchSize) {
+  const batch = roads.slice(i, i + batchSize)
+  const filtered = batch.filter(road => matchesFilter(road, filter))
+  results.push(...filtered)
+  
+  // Yield control for UI updates
+  if (batchNumber % 10 === 0) {
+    await new Promise(resolve => setTimeout(resolve, 0))
+  }
+}
+```
+
+This allows querying files with millions of roads without crashing!
 
 ---
 
@@ -220,7 +272,7 @@ When you click a road:
 ## 5. Tag Editing (The "Save Changes" Feature)
 
 ### The Problem
-OSM data is just a bunch of "tags" (key-value pairs) on roads:
+OSM data is just a bunch of "tags" (key-value pairs) on roads and nodes:
 ```
 highway=primary
 name=Jalan Sudirman
@@ -236,7 +288,7 @@ How do we let users edit these and save them back?
 
 #### Step 1: Track Changes in Memory
 
-When you click a road and edit its name, we don't modify the original file. Instead, we:
+When you click a road or node and edit its name, we don't modify the original file. Instead, we:
 1. Keep the original data in memory
 2. Store your changes separately ("diffs")
 3. Show the merged result on the map
@@ -299,7 +351,7 @@ Power users want to ask complex questions:
 - "Find intersections with traffic lights"
 - "Average road length by type"
 
-### The Solution: DuckDB-wasm
+### The Solution: DuckDB-wasm (for small files)
 
 **Tech: DuckDB-wasm (SQLite for the browser)**
 
@@ -327,9 +379,12 @@ ORDER BY length_meters DESC;
 
 Translation: "Show me primary roads longer than 5km, sorted by length."
 
-#### Why WebAssembly?
+#### Worker Queries for Large Files
 
-DuckDB is written in C++. WebAssembly lets us run C++ code in the browser at **near-native speed** — about 10-50x faster than JavaScript for heavy data processing.
+For files >50K roads, we skip DuckDB (would use too much memory):
+- Export roads from worker
+- Process in streaming batches (10K per batch)
+- Supports COUNT, FILTER, AGGREGATE operations
 
 ---
 
@@ -376,6 +431,27 @@ When SELECT query returns results:
 
 ---
 
+## 9. File Upload Lock (Prevent User Errors)
+
+### The Problem
+Users might try to load multiple files simultaneously, causing:
+- Memory overflow
+- Confusing UI state
+- Worker conflicts
+
+### The Solution: Single File Mode
+
+**Tech: UI state management**
+
+Once a file is loaded:
+- Upload controls are **disabled**
+- Visual warning banner: "File upload locked — Refresh page to load new file"
+- All upload methods blocked (drag-drop, sample data, Overpass)
+
+This ensures one file at a time, preventing memory and state issues.
+
+---
+
 ## Tech Stack Summary
 
 | Problem | Solution | Tech Used |
@@ -387,10 +463,12 @@ When SELECT query returns results:
 | **Remembering edits** | State management | Zustand |
 | **Exporting PBF** | Binary file writing | osmix PBF writer |
 | **Fresh OSM data** | API queries | Overpass API |
-| **Complex SQL queries** | In-browser database | DuckDB-wasm |
-| **Natural language queries** | NL2SQL + Vertex AI | Google Gemini |
+| **Large file queries** | Streaming batch processing | Worker queries |
+| **Small file queries** | In-browser database | DuckDB-wasm |
+| **Natural language queries** | NL2SQL + Local Parser | Vertex AI + Rule-based |
 | **Worker communication** | Simplified RPC | Comlink |
 | **Coordinate display** | Real-time projection | MapLibre unproject |
+| **Memory management** | Dynamic throttling | Memory monitor, query routing |
 
 ---
 
@@ -417,6 +495,7 @@ By doing everything in the browser:
 - ✅ **Speed**: No network latency
 - ✅ **Offline**: Works without internet after initial load
 - ✅ **Free**: No server costs to pay
+- ✅ **Scalable**: Can handle files with millions of roads
 
 ### The Trade-offs
 
@@ -424,6 +503,7 @@ Of course, there are downsides:
 - ❌ **Limited by device RAM** (can't load planet-sized files)
 - ❌ **Initial load can be slow** (download big PBF first)
 - ❌ **Safari has limitations** (no SharedArrayBuffer support)
+- ❌ **AI queries need fallback** (API might be unavailable)
 
 But for most use cases — analyzing city or regional OSM data — it's perfect.
 
@@ -435,9 +515,10 @@ OSMRoad is essentially a **mini-GIS workstation** that runs in your browser. It 
 - Database indexing (R-trees)
 - Graph algorithms (routing)
 - Binary parsing (PBF)
-- SQL processing (DuckDB)
-- Natural language processing (Vertex AI)
+- SQL processing (DuckDB + Worker queries)
+- Natural language processing (Vertex AI + Local parser)
 - GPU rendering (MapLibre)
+- Memory management (Dynamic throttling)
 
 All working together to let you explore OpenStreetMap data without installing anything or paying for servers.
 

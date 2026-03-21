@@ -19,7 +19,8 @@ export const RASTER_OPACITY = 0.9
 export const FILE_SIZE_THRESHOLDS = {
 	FULL_VECTOR: 500_000,      // < 500K nodes = full vector
 	HYBRID: 2_000_000,         // 500K - 2M = hybrid (raster 0-8, vector 8+)
-	RASTER_REQUIRED: 2_000_000 // > 2M = raster 0-10, vector 10+
+	RASTER_REQUIRED: 2_000_000, // > 2M = raster 0-10, vector 10+
+	COUNTRY: 10_000_000,       // > 10M = raster 0-11, vector 12+ (country-scale files)
 } as const
 
 export const DEFAULT_ZOOM = 5

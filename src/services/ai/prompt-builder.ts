@@ -353,3 +353,204 @@ export function mapRoadType(term: string): string | null {
 	
 	return mappings[term.toLowerCase()] || null
 }
+
+/**
+ * Local natural language parser - fallback when API unavailable
+ * Parses Indonesian and English road queries
+ */
+export interface ParsedQuery {
+  sql: string
+  queryType: 'count' | 'aggregate' | 'select' | 'group'
+  filters: QueryFilter
+}
+
+export interface QueryFilter {
+  highway?: string[]
+  nameContains?: string
+  bbox?: [number, number, number, number]
+}
+
+export function parseNaturalLanguage(query: string): ParsedQuery {
+  const lower = query.toLowerCase()
+  const filters: QueryFilter = {}
+
+  // Extract road type
+  let highway: string | null = null
+  for (const [term, type] of Object.entries(ROAD_TYPE_MAPPINGS)) {
+    if (lower.includes(term)) {
+      highway = type
+      filters.highway = [type]
+      break
+    }
+  }
+
+  // Extract name filter
+  const nameMatch = lower.match(/(?:nama|name|dengan nama|called)\s+['"]?([^'"]+)['"]?/i)
+  if (nameMatch) {
+    filters.nameContains = nameMatch[1].trim()
+  }
+
+  // COUNT queries: "berapa", "count", "jumlah", "berapa banyak"
+  if (lower.includes('berapa') || lower.includes('count') || lower.includes('jumlah')) {
+    const roadType = extractRoadType(lower)
+    filters.highway = roadType ? [roadType] : undefined
+    
+    return {
+      sql: `SELECT COUNT(*) as total FROM roads${buildWhereClause(filters)}`,
+      queryType: 'count',
+      filters
+    }
+  }
+
+  // Aggregate queries: "total panjang", "total length", "average", "longest"
+  if (lower.includes('total panjang') || lower.includes('total length') ||
+      lower.includes('panjang total') || lower.includes('jumlah panjang')) {
+    const roadType = extractRoadType(lower)
+    filters.highway = roadType ? [roadType] : undefined
+    
+    return {
+      sql: `SELECT SUM(length_meters) as total_length_meters, SUM(length_meters)/1000 as total_length_km FROM roads${buildWhereClause(filters)}`,
+      queryType: 'aggregate',
+      filters
+    }
+  }
+
+  // Average length
+  if (lower.includes('rata-rata') || lower.includes('average') || lower.includes('mean')) {
+    const roadType = extractRoadType(lower)
+    filters.highway = roadType ? [roadType] : undefined
+    
+    return {
+      sql: `SELECT AVG(length_meters) as avg_length_meters FROM roads${buildWhereClause(filters)}`,
+      queryType: 'aggregate',
+      filters
+    }
+  }
+
+  // Longest/shortest
+  if (lower.includes('terpanjang') || lower.includes('longest')) {
+    const roadType = extractRoadType(lower)
+    filters.highway = roadType ? [roadType] : undefined
+    
+    return {
+      sql: `SELECT name, length_meters, length_meters/1000 as length_km FROM roads${buildWhereClause(filters)} ORDER BY length_meters DESC LIMIT 10`,
+      queryType: 'select',
+      filters
+    }
+  }
+
+  if (lower.includes('terpendek') || lower.includes('shortest')) {
+    const roadType = extractRoadType(lower)
+    filters.highway = roadType ? [roadType] : undefined
+    
+    return {
+      sql: `SELECT name, length_meters, length_meters/1000 as length_km FROM roads${buildWhereClause(filters)} ORDER BY length_meters ASC LIMIT 10`,
+      queryType: 'select',
+      filters
+    }
+  }
+
+  // Group by queries
+  if (lower.includes('kelompokkan') || lower.includes('group') || 
+      lower.includes('masing-masing') || lower.includes('per ')) {
+    return {
+      sql: `SELECT highway, COUNT(*) as count, SUM(length_meters)/1000 as total_km FROM roads GROUP BY highway ORDER BY count DESC`,
+      queryType: 'group',
+      filters: {}
+    }
+  }
+
+  // List/select queries with filter
+  if (lower.includes('daftar') || lower.includes('list') || lower.includes('tampilkan') || 
+      lower.includes('show') || lower.includes('cari') || lower.includes('find')) {
+    const roadType = extractRoadType(lower)
+    filters.highway = roadType ? [roadType] : undefined
+    
+    const limit = lower.includes('semua') ? '' : ' LIMIT 50'
+    
+    return {
+      sql: `SELECT name, highway, length_meters, length_meters/1000 as length_km FROM roads${buildWhereClause(filters)} ORDER BY length_meters DESC${limit}`,
+      queryType: 'select',
+      filters
+    }
+  }
+
+  // Default: simple list
+  return {
+    sql: `SELECT name, highway, length_meters, length_meters/1000 as length_km FROM roads${buildWhereClause(filters)} LIMIT 50`,
+    queryType: 'select',
+    filters
+  }
+}
+
+// Road type mapping for local parser
+const ROAD_TYPE_MAPPINGS: Record<string, string> = {
+  // Indonesian
+  'tol': 'motorway',
+  'jalan tol': 'motorway',
+  'jalan utama': 'primary',
+  'arteri': 'primary',
+  'jalan arteri': 'primary',
+  'jalan kabupaten': 'secondary',
+  'jalan provinsi': 'secondary',
+  'jalan lokal': 'tertiary',
+  'jalan perumahan': 'residential',
+  'komplek': 'residential',
+  'perumahan': 'residential',
+  'permukiman': 'residential',
+  'jalan desa': 'track',
+  'jalan tanah': 'track',
+  'kampung': 'unclassified',
+  'jalan kecil': 'service',
+  'gang': 'service',
+  'lorong': 'service',
+  'trotoar': 'footway',
+  'jalur pejalan': 'footway',
+  'jalur sepeda': 'cycleway',
+  'jalan setapak': 'path',
+  'tangga': 'steps',
+  // English
+  'motorway': 'motorway',
+  'highway': 'motorway',
+  'trunk': 'trunk',
+  'primary': 'primary',
+  'main road': 'primary',
+  'secondary': 'secondary',
+  'tertiary': 'tertiary',
+  'residential': 'residential',
+  'service': 'service',
+  'track': 'track',
+  'path': 'path',
+  'footway': 'footway',
+  'sidewalk': 'footway',
+  'cycleway': 'cycleway',
+  'bike lane': 'cycleway',
+  'steps': 'steps',
+  'stairs': 'steps',
+}
+
+function extractRoadType(query: string): string | null {
+  for (const [term, type] of Object.entries(ROAD_TYPE_MAPPINGS)) {
+    if (query.includes(term)) {
+      return type
+    }
+  }
+  return null
+}
+
+function buildWhereClause(filters: QueryFilter): string {
+  const conditions: string[] = []
+  
+  if (filters.highway && filters.highway.length > 0) {
+    conditions.push(`highway = '${filters.highway[0]}'`)
+  }
+  
+  if (filters.nameContains) {
+    conditions.push(`name ILIKE '%${filters.nameContains}%'`)
+  }
+  
+  if (conditions.length > 0) {
+    return ' WHERE ' + conditions.join(' AND ')
+  }
+  return ''
+}

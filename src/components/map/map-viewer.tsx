@@ -8,7 +8,6 @@ import { useUIStore } from "../../stores/ui-store"
 import { useRoutingStore } from "../../stores/routing-store"
 import { useOsm } from "../../hooks/use-osm"
 import { RoadLayer } from "./road-layer"
-import { RasterLayer } from "./raster-layer"
 import { RestrictionLayer } from "./restriction-layer"
 import { AccessLayer } from "./access-layer"
 import { SpeedLayer } from "./speed-layer"
@@ -21,6 +20,7 @@ import { BBoxDrawLayer } from "./bbox-draw-layer"
 import { CursorCoordinates } from "./cursor-coordinates"
 import { ZoomNotification } from "./zoom-notification"
 import { VectorLoadingIndicator } from "./vector-loading-indicator"
+import { MemoryMonitor } from "./memory-monitor"
 // Protocol imports ensure they're registered at module load time
 import "../../lib/osmix-vector-protocol"
 import "../../lib/osmix-raster-protocol"
@@ -82,15 +82,31 @@ export function MapViewer() {
 	// (same pattern as merge.osmix.dev)
 
 	// Fly to dataset bounds when loaded + auto-open legend
+	// Auto-zoom based on file size to ensure vector tiles are visible
 	useEffect(() => {
 		if (!dataset?.info.bbox || !mapRef.current) return
 		const [minLon, minLat, maxLon, maxLat] = dataset.info.bbox
+		const nodeCount = dataset.info.stats.nodes
+		
+		// Determine max zoom based on file size for optimal vector tile visibility
+		// Large files: zoom 12+ for vector tiles to appear clearly
+		// Medium files: zoom 14+ 
+		// Small files: zoom 16 max
+		let maxZoom = 16
+		if (nodeCount > 2_000_000) {
+			maxZoom = 12  // Large files like Thailand
+		} else if (nodeCount > 500_000) {
+			maxZoom = 14  // Medium files
+		}
+		
+		console.log(`[MapViewer] Auto-zoom: nodes=${nodeCount}, maxZoom=${maxZoom}`)
+		
 		mapRef.current.fitBounds(
 			[
 				[minLon, minLat],
 				[maxLon, maxLat],
 			],
-			{ padding: 50, duration: 1000 },
+			{ padding: 50, duration: 1000, maxZoom },
 		)
 		// Auto-open legend when data is loaded
 		setLegendOpen(true)
@@ -312,7 +328,9 @@ export function MapViewer() {
 		return [
 			`osmviz:${dataset.osmId}:ways`,
 			`osmviz:${dataset.osmId}:ways-dashed`,
-			`osmviz:${dataset.osmId}:nodes`,
+			`osmviz:${dataset.osmId}:node-bg`,
+			`osmviz:${dataset.osmId}:node-icons`,
+			`osmviz:${dataset.osmId}:nodes-plain`,
 		]
 	}, [dataset])
 
@@ -337,7 +355,6 @@ export function MapViewer() {
 					console.log('[MapViewer] dataset:', dataset ? { osmId: dataset.osmId, fileName: dataset.fileName } : null)
 					return dataset ? (
 						<>
-							<RasterLayer osmId={dataset.osmId} />
 							<RoadLayer osmId={dataset.osmId} />
 							<RestrictionLayer osmId={dataset.osmId} />
 							<AccessLayer osmId={dataset.osmId} />
@@ -352,6 +369,7 @@ export function MapViewer() {
 			<CursorCoordinates />
 			<ZoomNotification />
 			<VectorLoadingIndicator />
+			<MemoryMonitor />
 			<GeocodingOverlay />
 			<BasemapSwitcher />
 			<MapLegend />

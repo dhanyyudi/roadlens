@@ -7,8 +7,8 @@ import type {
 	MapSourceDataEvent,
 } from "maplibre-gl"
 import { zigzag } from "@osmix/shared/zigzag"
-import { osmixIdToTileUrl } from "../../lib/osmix-vector-protocol"
-import { VECTOR_MAX_ZOOM, FILE_SIZE_THRESHOLDS } from "../../constants"
+import { osmixIdToTileUrl, setOsmixVectorMinZoom } from "../../lib/osmix-vector-protocol"
+import { VECTOR_MAX_ZOOM } from "../../constants"
 import { useUIStore } from "../../stores/ui-store"
 import { useOsmStore } from "../../stores/osm-store"
 import { useSpeedStore } from "../../stores/speed-store"
@@ -192,15 +192,12 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 	const colorBySpeed = speedVisible && speedLoaded && speedStats
 
-	// Calculate min zoom based on file size
-	const nodeCount = dataset?.info.stats.nodes ?? 0
-	const vectorMinZoom = useMemo(() => {
-		if (nodeCount <= FILE_SIZE_THRESHOLDS.FULL_VECTOR) return 0
-		if (nodeCount <= FILE_SIZE_THRESHOLDS.HYBRID) return 8
-		return 10
-	}, [nodeCount])
+	// All files use full vector from zoom 0 (no minimum zoom restriction)
+	// Vector tiles will load progressively - may be slow for large files at low zoom
+	// but provides immediate feedback to users
+	const vectorMinZoom = 0
 
-	console.log(`[RoadLayer] mapInstance:`, mapInstance ? 'exists' : 'null', `vectorMinZoom: ${vectorMinZoom}, nodes: ${nodeCount}`)
+	console.log(`[RoadLayer] mapInstance:`, mapInstance ? 'exists' : 'null', `vectorMinZoom: ${vectorMinZoom}`)
 
 	// Dynamic road color
 	const roadColor = useMemo(() => {
@@ -267,8 +264,11 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 		const nodesSL = `${sourceLayerPrefix}:nodes`
 
 		const create = () => {
-			console.log(`[RoadLayer] Creating source and layers for ${osmId}, bounds:`, bounds)
+			console.log(`[RoadLayer] Creating source and layers for ${osmId}, vectorMinZoom=${vectorMinZoom}, bounds:`, bounds)
 			console.log(`[RoadLayer] Current map zoom: ${map.getZoom()}`)
+
+			// Register per-osmId min zoom so the protocol handler can skip low-zoom tiles
+			setOsmixVectorMinZoom(osmId, vectorMinZoom)
 			
 			// Clean up any existing
 			for (const id of allLayerIds(osmId)) {
@@ -280,16 +280,19 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 			const tileUrl = osmixIdToTileUrl(osmId)
 			console.log(`[RoadLayer] Vector tile URL: ${tileUrl}`)
-			console.log(`[RoadLayer] Source config: minzoom=${vectorMinZoom}, maxzoom=${VECTOR_MAX_ZOOM}, bounds=`, bounds)
+			console.log(`[RoadLayer] Source config: vectorMinZoom=${vectorMinZoom}, maxzoom=${VECTOR_MAX_ZOOM}, bounds=`, bounds)
 
+			// Use minzoom:0 on source so MapLibre always requests tiles via the protocol.
+			// The protocol handler filters low-zoom requests. Layer minzoom controls rendering.
+			// (MapLibre 5.x may not request tiles when source.minzoom is set for custom protocols)
 			map.addSource(sourceId, {
 				type: "vector",
 				tiles: [tileUrl],
 				bounds,
-				minzoom: vectorMinZoom,
+				minzoom: 0,
 				maxzoom: VECTOR_MAX_ZOOM,
 			})
-			
+
 			console.log(`[RoadLayer] Source created: ${sourceId}`)
 
 			// === CASING (outline) for solid roads ===
@@ -299,6 +302,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				source: sourceId,
 				"source-layer": waysSL,
 				filter: solidFilter,
+				minzoom: vectorMinZoom,
 				layout: { "line-join": "round", "line-cap": "round" },
 				paint: {
 					"line-color": roadCasingColorExpression as any,
@@ -314,6 +318,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				source: sourceId,
 				"source-layer": waysSL,
 				filter: solidFilter,
+				minzoom: vectorMinZoom,
 				layout: { "line-join": "round", "line-cap": "round" },
 				paint: {
 					"line-color": roadColorExpression as any,
@@ -329,6 +334,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				source: sourceId,
 				"source-layer": waysSL,
 				filter: dashedFilter,
+				minzoom: vectorMinZoom,
 				layout: { "line-join": "round", "line-cap": "butt" },
 				paint: {
 					"line-color": roadColorExpression as any,

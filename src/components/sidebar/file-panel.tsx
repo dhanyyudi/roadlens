@@ -5,7 +5,7 @@ import { useOsmStore } from "../../stores/osm-store"
 import { useUIStore } from "../../stores/ui-store"
 import { useOsm } from "../../hooks/use-osm"
 import { osmXmlToGeoJSON, formatBbox, calculateBboxAreaKm2 } from "../../lib/osm-xml-parser"
-import { FileText, MapPin, Route, GitBranch, MapPinned, SquareDashedMousePointer, Loader2, X, Check, Zap, ArrowRight } from "lucide-react"
+import { FileText, MapPin, Route, GitBranch, MapPinned, SquareDashedMousePointer, Loader2, X, Check, Zap, ArrowRight, Lock } from "lucide-react"
 
 // Sample data - Denpasar only (roads/highway only, filtered)
 const SAMPLE_FILE = {
@@ -37,6 +37,11 @@ export function FilePanel() {
 	const handleFile = useCallback(
 		async (file: File) => {
 			if (!remote) return
+			// Prevent upload if file already loaded
+			if (useOsmStore.getState().dataset) {
+				console.log("[FilePanel] Upload blocked: file already loaded")
+				return
+			}
 			const store = useOsmStore.getState()
 			store.setLoading(true)
 			store.setError(null)
@@ -59,6 +64,11 @@ export function FilePanel() {
 
 	const loadSample = useCallback(async () => {
 		if (!remote) return
+		// Prevent upload if file already loaded
+		if (useOsmStore.getState().dataset) {
+			console.log("[FilePanel] Sample load blocked: file already loaded")
+			return
+		}
 		const store = useOsmStore.getState()
 		store.setLoading(true)
 		store.setError(null)
@@ -86,6 +96,11 @@ export function FilePanel() {
 	}, [remote, setActiveTab])
 
 	const startDrawingMode = useCallback(() => {
+		// Prevent drawing mode if file already loaded
+		if (useOsmStore.getState().dataset) {
+			console.log("[FilePanel] Drawing mode blocked: file already loaded")
+			return
+		}
 		clearDrawnBbox()
 		setDrawingMode(true)
 	}, [clearDrawnBbox, setDrawingMode])
@@ -189,19 +204,34 @@ out geom;`
 		}
 	}, [remote, drawnBbox, clearDrawnBbox, setDrawingMode, setActiveTab])
 
+	// Lock state: prevent upload if file already loaded
+	const isLocked = !!dataset
+
 	return (
 		<div className="flex flex-col gap-4 p-4">
 			<h2 className="text-sm font-semibold text-zinc-300">Load OSM PBF</h2>
 
+			{isLocked && (
+				<div className="rounded-lg border border-amber-500/30 bg-amber-900/20 p-3">
+					<div className="flex items-center gap-2 text-amber-400">
+						<Lock className="h-4 w-4" />
+						<span className="text-xs font-medium">Upload Locked</span>
+					</div>
+					<p className="mt-1 text-[10px] text-amber-300/70">
+						File already loaded. Refresh page to load a new file.
+					</p>
+				</div>
+			)}
+
 			<FileDropZone
 				accept=".pbf,.osm.pbf"
-				label="Drop .pbf file here or click to browse"
+				label={isLocked ? "File already loaded" : "Drop .pbf file here or click to browse"}
 				onFile={handleFile}
-				disabled={isLoading || !remote}
+				disabled={isLoading || !remote || isLocked}
 			/>
 
 			{/* Sample Data Section - Prominent Quick Start */}
-			<div className="relative overflow-hidden rounded-lg border border-blue-500/30 bg-gradient-to-br from-blue-900/30 via-zinc-800/50 to-zinc-800/50 p-3">
+			<div className={`relative overflow-hidden rounded-lg border border-blue-500/30 bg-gradient-to-br from-blue-900/30 via-zinc-800/50 to-zinc-800/50 p-3 ${isLocked ? 'opacity-50' : ''}`}>
 				{/* Quick Start Badge */}
 				<div className="absolute right-2 top-2">
 					<span className="inline-flex items-center gap-1 rounded-full bg-green-500/20 px-2 py-0.5 text-[10px] font-medium text-green-400">
@@ -222,7 +252,7 @@ out geom;`
 				
 				<button
 					onClick={loadSample}
-					disabled={isLoading || !remote}
+					disabled={isLoading || !remote || isLocked}
 					className="group flex w-full items-center justify-between rounded-lg bg-blue-600/20 px-3 py-2.5 text-left text-xs transition-all hover:bg-blue-600/30 hover:shadow-lg hover:shadow-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
 				>
 					<div className="flex items-center gap-2">
@@ -243,7 +273,7 @@ out geom;`
 			</div>
 
 			{/* Download from OSM Section */}
-			<div className="rounded-lg bg-zinc-800/50 p-3">
+			<div className={`rounded-lg bg-zinc-800/50 p-3 ${isLocked ? 'opacity-50' : ''}`}>
 				<div className="mb-2 flex items-center gap-2">
 					<SquareDashedMousePointer className="h-4 w-4 text-green-400" />
 					<span className="text-xs font-medium text-zinc-300">Download from OSM</span>
@@ -256,10 +286,10 @@ out geom;`
 						</p>
 						<button
 							onClick={startDrawingMode}
-							disabled={isLoading || !remote || overpassLoading}
+							disabled={isLoading || !remote || overpassLoading || isLocked}
 							className="w-full rounded-md bg-green-600/20 px-3 py-2 text-xs font-medium text-green-400 transition-colors hover:bg-green-600/30 disabled:opacity-50"
 						>
-							Draw Area on Map
+							{isLocked ? "File already loaded" : "Draw Area on Map"}
 						</button>
 					</>
 				)}
@@ -313,7 +343,7 @@ out geom;`
 								<div className="flex gap-2">
 									<button
 										onClick={downloadFromOverpass}
-										disabled={overpassLoading || isTooLarge}
+										disabled={overpassLoading || isTooLarge || isLocked}
 										className="flex-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-50"
 									>
 										{overpassLoading ? (
@@ -326,6 +356,8 @@ out geom;`
 												<Check className="h-3 w-3" />
 												Loaded!
 											</span>
+										) : isLocked ? (
+											"File already loaded"
 										) : isTooLarge ? (
 											"Area Too Large"
 										) : (

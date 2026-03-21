@@ -6,6 +6,9 @@ import { useDuckDB } from './use-duckdb'
 import { useOsmDuckDBSync } from './use-osm-duckdb-sync'
 import { useAIMapHighlight } from './use-ai-map-highlight'
 import { detectQueryIntent, mapRoadType } from '@/services/ai/prompt-builder'
+import { getOsmRemote } from './use-osm'
+import { useOsmStore } from '@/stores/osm-store'
+import type { QueryFilter } from '@/workers/query-processor'
 
 export interface UseAIQueryReturn {
 	// State
@@ -19,6 +22,7 @@ export interface UseAIQueryReturn {
 	isDataReady: boolean
 	isSyncing: boolean
 	syncProgress: number
+	syncStatusMessage: string
 
 	// Actions
 	toggleOpen: () => void
@@ -138,38 +142,77 @@ function formatResultMessage(queryType: 'count' | 'aggregate' | 'select' | 'grou
 export function useAIQuery(): UseAIQueryReturn {
 	const store = useAIQueryStore()
 	const duckDBState = useDuckDB()
-	const { isSynced: isDataReady, isSyncing, progress: syncProgress } = useOsmDuckDBSync()
+	const { isSynced: isDataReady, isSyncing, useWorkerOnly, progress: syncProgress, statusMessage: syncStatusMessage } = useOsmDuckDBSync()
 	const { highlightAndZoom, clearHighlight } = useAIMapHighlight()
 	const [isAIConfigured] = useState(true)
 
-	// Execute SQL on DuckDB
-	const executeSQL = useCallback(
-		async (sql: string): Promise<QueryResults> => {
-			if (!duckDBState.duckdb) {
+	// Execute query on DuckDB or Worker (fallback)
+	const executeQuery = useCallback(
+		async (sql: string, filter?: QueryFilter): Promise<QueryResults> => {
+			const startTime = performance.now()
+			
+			// Try DuckDB first (for small files only)
+			if (duckDBState.duckdb && !duckDBState.isLimited && !useWorkerOnly) {
+				try {
+					const result = await duckDBState.duckdb.executeQuery(sql)
+					
+					if (!result.error) {
+						return {
+							rowCount: result.rows.length,
+							executionTime: performance.now() - startTime,
+							sampleData: result.rows.slice(0, 10),
+							allData: result.rows,
+						}
+					}
+				} catch (e) {
+					console.log('[AI Query] DuckDB query failed, trying worker...')
+				}
+			}
+			
+			// Fallback to worker query (for large files)
+			const remote = getOsmRemote()
+			if (!remote) {
 				return {
 					rowCount: 0,
 					executionTime: 0,
-					error: 'Database not initialized',
+					error: 'Query engine not available',
 				}
 			}
-
-			const startTime = performance.now()
-
+			
 			try {
-				const result = await duckDBState.duckdb.executeQuery(sql)
+				const worker = remote.getWorker()
+				const osmId = useOsmStore.getState().dataset?.osmId
 				
-				if (result.error) {
+				if (!osmId) {
 					return {
 						rowCount: 0,
-						executionTime: performance.now() - startTime,
-						error: result.error,
+						executionTime: 0,
+						error: 'No OSM data loaded',
 					}
 				}
-
+				
+				// Use provided filter or parse from SQL
+				const queryFilter = filter || await worker.parseQuery(sql)
+				
+				// Check if it's a count query
+				const upperSQL = sql.toUpperCase()
+				if (upperSQL.includes('COUNT(*)')) {
+					const count = await worker.executeCount(osmId, queryFilter)
+					return {
+						rowCount: 1,
+						executionTime: performance.now() - startTime,
+						sampleData: [{ count }],
+						allData: [{ count }],
+					}
+				}
+				
+				// Regular query
+				const result = await worker.executeQuery(osmId, queryFilter, { limit: 100 })
+				
 				return {
-					rowCount: result.rows.length,
+					rowCount: result.filteredCount,
 					executionTime: performance.now() - startTime,
-					sampleData: result.rows.slice(0, 10),
+					sampleData: result.rows,
 					allData: result.rows,
 				}
 			} catch (error: any) {
@@ -180,7 +223,7 @@ export function useAIQuery(): UseAIQueryReturn {
 				}
 			}
 		},
-		[duckDBState]
+		[duckDBState, useWorkerOnly]
 	)
 
 	// Send natural language query - AUTO EXECUTE without confirmation
@@ -221,7 +264,7 @@ export function useAIQuery(): UseAIQueryReturn {
 				console.log('[AI Query] Query type:', queryType)
 
 				// Auto-execute immediately
-				const execResult = await executeSQL(result.sql)
+				const execResult = await executeQuery(result.sql)
 
 				if (execResult.error) {
 					store.addErrorMessage(`Query gagal: ${execResult.error}`)
@@ -245,7 +288,7 @@ export function useAIQuery(): UseAIQueryReturn {
 				store.setStatus('error')
 			}
 		},
-		[store, executeSQL, isDataReady]
+		[store, executeQuery, isDataReady]
 	)
 
 	// Clear chat
@@ -265,6 +308,7 @@ export function useAIQuery(): UseAIQueryReturn {
 		isDataReady,
 		isSyncing,
 		syncProgress,
+		syncStatusMessage,
 		toggleOpen: store.toggleOpen,
 		sendQuery,
 		clearChat,
