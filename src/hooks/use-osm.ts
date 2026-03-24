@@ -238,16 +238,45 @@ async function initRemote(): Promise<OsmixRemote<VizWorker>> {
 			options: Record<string, unknown> = {},
 		) => {
 			progressHistory = []
-			
+
 			const transferable = await fileToBuffer(data)
 			const info = await workerProxy.fromGeoJSON(
 				Comlink.transfer({ data: transferable, options }, [
 					transferable as ArrayBuffer,
 				]),
 			)
-			
+
 			progressHistory = []
 			return info as Awaited<ReturnType<OsmixRemote<VizWorker>["fromGeoJSON"]>>
+		}
+
+		r.fromGeoParquet = async (
+			data: ArrayBufferLike | File,
+			options: Record<string, unknown> = {},
+		) => {
+			progressHistory = []
+
+			let bytesTotal: number | undefined
+			if (data instanceof File) {
+				bytesTotal = data.size
+			} else if (data instanceof ArrayBuffer) {
+				bytesTotal = data.byteLength
+			}
+
+			await workerProxy.addProgressListener(
+				Comlink.proxy((progress: Progress) => {
+					const extended = transformProgress(progress, bytesTotal)
+					useOsmStore.getState().setProgress(extended)
+				}),
+			)
+
+			const transferable = (await fileToBuffer(data)) as ArrayBuffer
+			const info = await workerProxy.fromGeoParquet(
+				Comlink.transfer({ data: transferable, options }, [transferable]),
+			)
+
+			progressHistory = []
+			return info as Awaited<ReturnType<OsmixRemote<VizWorker>["fromGeoParquet"]>>
 		}
 
 		r.getVectorTile = (osmId: unknown, tile: [number, number, number]) => {
@@ -256,6 +285,10 @@ async function initRemote(): Promise<OsmixRemote<VizWorker>> {
 
 		r.toPbfData = (osmId: unknown) => {
 			return workerProxy.toPbf(toId(osmId))
+		}
+
+		r.exportRoadsPbf = (osmId: unknown) => {
+			return (workerProxy as any).exportRoadsPbf(toId(osmId))
 		}
 
 		r.search = (osmId: unknown, key: string, val?: string) => {

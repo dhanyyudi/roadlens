@@ -6,10 +6,11 @@ import { useOsmStore } from "../../stores/osm-store"
 import { useUIStore } from "../../stores/ui-store"
 import { useOsm } from "../../hooks/use-osm"
 import { osmXmlToGeoJSON, formatBbox, calculateBboxAreaKm2 } from "../../lib/osm-xml-parser"
-import { 
-	saveDatasetMetadata, 
+import { detectFormat, convertToGeoJSON } from "../../lib/format-converter"
+import {
+	saveDatasetMetadata,
 	getLastDataset,
-	type CachedDataset 
+	type CachedDataset
 } from "../../lib/storage"
 import { FileText, MapPin, Route, GitBranch, MapPinned, SquareDashedMousePointer, Loader2, X, Check, Zap, ArrowRight, Lock, ChevronDown } from "lucide-react"
 
@@ -61,9 +62,10 @@ const SAMPLE_FILES: SampleFile[] = [
 // Overpass API endpoint
 const OVERPASS_API = "https://overpass-api.de/api/interpreter"
 
-// Maximum allowed area (km) to prevent timeout
-const MAX_AREA_KM2 = 10
-const OVERPASS_TIMEOUT_MS = 90000 // 90 seconds
+// Area limit — self-imposed soft cap. Overpass itself has no hard area limit;
+// dense cities may still be slow for very large areas.
+const MAX_AREA_KM2 = 50
+const OVERPASS_TIMEOUT_MS = 180000 // 3 minutes
 
 export function FilePanel() {
 	const { remote } = useOsm()
@@ -75,6 +77,7 @@ export function FilePanel() {
 	const clearDrawnBbox = useUIStore((s) => s.clearDrawnBbox)
 	
 	const [overpassLoading, setOverpassLoading] = useState(false)
+	const [overpassStage, setOverpassStage] = useState<"querying" | "downloading" | "parsing" | "loading" | null>(null)
 	const [downloadSuccess, setDownloadSuccess] = useState(false)
 	const [showAllSamples, setShowAllSamples] = useState(false)
 	const [loadingSample, setLoadingSample] = useState<string | null>(null)
@@ -133,11 +136,27 @@ export function FilePanel() {
 			store.setLoading(true)
 			store.setError(null)
 			try {
-				const result = await remote.fromPbf(file, { id: file.name })
+				const format = detectFormat(file)
+				if (format === "unknown") {
+					throw new Error(`Unsupported file type: ${file.name}. Supported formats: .pbf, .osm, .geojson, .gpx, .kml, .kmz, .zip`)
+				}
+
+				let result
+				if (format === "pbf") {
+					result = await remote.fromPbf(file, { id: file.name })
+				} else if (format === "parquet") {
+					result = await (remote as any).fromGeoParquet(file, { id: file.name })
+				} else {
+					const geojson = await convertToGeoJSON(file, format)
+					const gjFile = new File([JSON.stringify(geojson)], file.name, { type: "application/geo+json" })
+					result = await remote.fromGeoJSON(gjFile, { id: file.name })
+				}
+
 				store.setDataset({
 					osmId: result.id,
 					info: result,
 					fileName: file.name,
+					format,
 				})
 				store.setLoading(false)
 				store.setProgress(null)
@@ -174,6 +193,7 @@ export function FilePanel() {
 				osmId: result.id,
 				info: result,
 				fileName: fileName,
+				format: "pbf",
 			})
 			store.setLoading(false)
 			store.setProgress(null)
@@ -213,49 +233,103 @@ export function FilePanel() {
 			useOsmStore
 				.getState()
 				.setError(
-					`Area too large (${areaKm2.toFixed(1)} km). Max allowed: ${MAX_AREA_KM2} km. Please draw a smaller area (about 2-5 km works best).`,
+					`Area too large (${areaKm2.toFixed(1)} km²). Maximum is ${MAX_AREA_KM2} km².`,
 				)
 			return
 		}
 
 		setOverpassLoading(true)
+		setOverpassStage("querying")
 		setDownloadSuccess(false)
 		const store = useOsmStore.getState()
-		store.setLoading(true)
 		store.setError(null)
 
 		try {
-			const query = `[bbox:${drawnBbox.minLat},${drawnBbox.minLon},${drawnBbox.maxLat},${drawnBbox.maxLon}];
+			// timeout + maxsize hints sent to Overpass server-side
+			const query = `[out:xml][timeout:180][maxsize:134217728][bbox:${drawnBbox.minLat},${drawnBbox.minLon},${drawnBbox.maxLat},${drawnBbox.maxLon}];
 way["highway"];
 out geom;`
 
 			const controller = new AbortController()
 			const timeoutId = setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS)
-			
+
+			setOverpassStage("downloading")
 			const response = await fetch(OVERPASS_API, {
 				method: "POST",
 				headers: { "Content-Type": "application/x-www-form-urlencoded" },
 				body: `data=${encodeURIComponent(query)}`,
 				signal: controller.signal,
 			})
-			
+
 			clearTimeout(timeoutId)
 
 			if (!response.ok) {
-				if (response.status === 504) {
-					throw new Error("Overpass API timeout. Area too large or too complex. Try a smaller area (2-3 km).")
+				if (response.status === 429) {
+					throw new Error("Overpass API rate limited. Please wait a moment and try again.")
 				}
-				throw new Error(`Overpass API error: ${response.statusText}`)
+				if (response.status === 504) {
+					throw new Error("Overpass API server timeout. Try a smaller area or try again later.")
+				}
+				throw new Error(`Overpass API error: ${response.status} ${response.statusText}`)
 			}
 
-			const osmXml = await response.text()
+			// Stream the response to get byte progress
+			const contentLength = response.headers.get("content-length")
+			const totalBytes = contentLength ? parseInt(contentLength) : null
+			const reader = response.body?.getReader()
+			const chunks: Uint8Array[] = []
+			let receivedBytes = 0
+
+			if (reader) {
+				while (true) {
+					const { done, value } = await reader.read()
+					if (done) break
+					chunks.push(value)
+					receivedBytes += value.length
+					// Update download progress in store
+					const dlMsg = totalBytes
+					? `Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} / ${(totalBytes / 1024 / 1024).toFixed(1)} MB`
+					: `Downloading... ${(receivedBytes / 1024 / 1024).toFixed(1)} MB`
+				store.setProgress({
+						msg: dlMsg,
+						timestamp: Date.now(),
+						level: "info",
+						stage: "downloading",
+						percent: totalBytes ? Math.round((receivedBytes / totalBytes) * 60) : undefined,
+						bytesLoaded: receivedBytes,
+						bytesTotal: totalBytes ?? undefined,
+					})
+				}
+			}
+
+			const osmXml = new TextDecoder().decode(
+				chunks.reduce((acc, chunk) => {
+					const merged = new Uint8Array(acc.length + chunk.length)
+					merged.set(acc)
+					merged.set(chunk, acc.length)
+					return merged
+				}, new Uint8Array(0))
+			)
+
+			setOverpassStage("parsing")
+			store.setProgress({ msg: "Parsing OSM XML...", timestamp: Date.now(), level: "info", stage: "parsing", percent: 70 })
+
 			const geojson = osmXmlToGeoJSON(osmXml)
 
 			if (geojson.features.length === 0) {
-				throw new Error("No roads found in selected area. Try a larger area.")
+				throw new Error("No roads found in selected area. Try drawing a larger area.")
 			}
 
-			const fileName = `roads_${drawnBbox.minLon.toFixed(2)}_${drawnBbox.minLat.toFixed(2)}.geojson`
+			setOverpassStage("loading")
+			store.setProgress({
+				msg: `Loading ${geojson.features.length.toLocaleString()} road segments...`,
+				timestamp: Date.now(),
+				level: "info",
+				stage: "indexing",
+				percent: 80,
+			})
+
+			const fileName = `overpass_${drawnBbox.minLon.toFixed(3)}_${drawnBbox.minLat.toFixed(3)}.geojson`
 			const result = await remote.fromGeoJSON(
 				new File([JSON.stringify(geojson)], fileName, { type: "application/geo+json" }),
 				{ id: fileName },
@@ -265,6 +339,7 @@ out geom;`
 				osmId: result.id,
 				info: result,
 				fileName: fileName,
+				format: "osm",
 			})
 
 			setDownloadSuccess(true)
@@ -277,12 +352,14 @@ out geom;`
 			setActiveTab("inspect")
 		} catch (err) {
 			if (err instanceof Error && err.name === "AbortError") {
-				store.setError("Request timed out. Area may be too large or network is slow. Try a smaller area.")
+				store.setError("Request timed out after 3 minutes. The area may be too dense. Try a smaller area.")
 			} else {
 				store.setError(String(err))
 			}
+		} finally {
 			setOverpassLoading(false)
-			store.setLoading(false)
+			setOverpassStage(null)
+			store.setProgress(null)
 		}
 	}, [remote, drawnBbox, clearDrawnBbox, setDrawingMode, setActiveTab])
 
@@ -291,7 +368,7 @@ out geom;`
 
 	return (
 		<div className="flex flex-col gap-4 p-4">
-			<h2 className="text-sm font-semibold text-zinc-300">Load OSM PBF</h2>
+			<h2 className="text-sm font-semibold text-zinc-300">Load OSM Data</h2>
 
 			{isLocked && (
 				<div className="rounded-lg border border-amber-500/30 bg-amber-900/20 p-3">
@@ -306,11 +383,14 @@ out geom;`
 			)}
 
 			<FileDropZone
-				accept=".pbf,.osm.pbf"
-				label={isLocked ? "File already loaded" : "Drop .pbf file here or click to browse"}
+				accept=".pbf,.osm.pbf,.osm,.geojson,.json,.gpx,.kml,.kmz,.zip,.parquet,.geoparquet"
+				label={isLocked ? "File already loaded" : "Drop file here or click to browse"}
 				onFile={handleFile}
 				disabled={isLoading || !remote || isLocked}
 			/>
+			<p className="text-[10px] text-zinc-600 -mt-2">
+				Supported: .pbf, .osm, .geojson, .gpx, .kml, .kmz, .zip (shapefile), .parquet
+			</p>
 
 			{/* Sample Data Section - Multiple Regions */}
 			<div className={`relative overflow-hidden rounded-lg border border-blue-500/30 bg-gradient-to-br from-blue-900/30 via-zinc-800/50 to-zinc-800/50 p-3 ${isLocked ? 'opacity-50' : ''}`}>
@@ -383,11 +463,11 @@ out geom;`
 					<SquareDashedMousePointer className="h-4 w-4 text-green-400" />
 					<span className="text-xs font-medium text-zinc-300">Download from OSM</span>
 				</div>
-				
-				{!isDrawingMode && !drawnBbox && (
+
+				{!isDrawingMode && !drawnBbox && !overpassLoading && (
 					<>
 						<p className="mb-2 text-[10px] text-zinc-500">
-							Draw a rectangle on the map (max {MAX_AREA_KM2} km, ~2-5 km works best)
+							Draw a rectangle on the map to fetch road data (highways only). Up to ~{MAX_AREA_KM2} km².
 						</p>
 						<button
 							onClick={startDrawingMode}
@@ -406,7 +486,7 @@ out geom;`
 							<span className="text-xs font-medium">Drawing mode active...</span>
 						</div>
 						<p className="mt-1 text-[10px] text-blue-300/70">
-							Click and drag on the map. Tip: Smaller areas (~2-3 km) load faster.
+							Click and drag on the map to select an area.
 						</p>
 						<button
 							onClick={cancelDrawing}
@@ -418,65 +498,106 @@ out geom;`
 					</div>
 				)}
 
-				{drawnBbox && (
+				{/* Download progress stages */}
+				{overpassLoading && (
+					<div className="rounded-md bg-green-500/10 p-3 space-y-2">
+						<div className="flex items-center gap-2 text-green-400">
+							<Loader2 className="h-4 w-4 animate-spin shrink-0" />
+							<span className="text-xs font-medium">
+								{overpassStage === "querying" && "Sending query to Overpass API..."}
+								{overpassStage === "downloading" && "Downloading road data..."}
+								{overpassStage === "parsing" && "Parsing OSM XML..."}
+								{overpassStage === "loading" && "Loading into map..."}
+							</span>
+						</div>
+						{/* Stage pipeline */}
+						<div className="flex items-center gap-1">
+							{(["querying", "downloading", "parsing", "loading"] as const).map((stage, i) => {
+								const stages = ["querying", "downloading", "parsing", "loading"] as const
+								const currentIdx = stages.indexOf(overpassStage ?? "querying")
+								const isDone = i < currentIdx
+								const isActive = i === currentIdx
+								return (
+									<div key={stage} className="flex items-center gap-1 flex-1">
+										<div className={`h-1.5 flex-1 rounded-full transition-colors ${
+											isDone ? "bg-green-500" : isActive ? "bg-green-400 animate-pulse" : "bg-zinc-700"
+										}`} />
+										{i < 3 && <div className={`w-1 h-1 rounded-full shrink-0 ${isDone ? "bg-green-500" : "bg-zinc-700"}`} />}
+									</div>
+								)
+							})}
+						</div>
+						<div className="flex justify-between text-[9px] text-zinc-500">
+							<span>Query</span>
+							<span>Download</span>
+							<span>Parse</span>
+							<span>Load</span>
+						</div>
+						{/* Byte progress from store */}
+						{progress?.bytesLoaded !== undefined && (
+							<div className="text-[10px] text-zinc-400">
+								{progress.msg}
+							</div>
+						)}
+						<p className="text-[9px] text-zinc-600">
+							Large areas may take up to 3 minutes depending on road density.
+						</p>
+					</div>
+				)}
+
+				{drawnBbox && !overpassLoading && (
 					<div className="space-y-2">
 						{(() => {
 							const areaKm2 = calculateBboxAreaKm2(drawnBbox.minLon, drawnBbox.minLat, drawnBbox.maxLon, drawnBbox.maxLat)
 							const isTooLarge = areaKm2 > MAX_AREA_KM2
+							const isLargeArea = areaKm2 > 20
 							return (
-								<div className={`rounded-md p-2 ${isTooLarge ? 'bg-red-500/10' : 'bg-green-500/10'}`}>
-									<div className={`flex items-center gap-1.5 ${isTooLarge ? 'text-red-400' : 'text-green-400'}`}>
-										{isTooLarge ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
-										<span className="text-[10px] font-medium">
-											{isTooLarge ? 'Area too large!' : 'Area selected'}
-										</span>
-									</div>
-									<div className="mt-1 text-[10px] text-zinc-400 font-mono">
-										{formatBbox(drawnBbox)}
-									</div>
-									<div className={`text-[9px] ${isTooLarge ? 'text-red-400' : 'text-zinc-500'}`}>
-										Area: ~{areaKm2.toFixed(1)} km {isTooLarge && `(max ${MAX_AREA_KM2} km)`}
-									</div>
-								</div>
-							)
-						})()}
-						
-						{(() => {
-							const areaKm2 = calculateBboxAreaKm2(drawnBbox.minLon, drawnBbox.minLat, drawnBbox.maxLon, drawnBbox.maxLat)
-							const isTooLarge = areaKm2 > MAX_AREA_KM2
-							return (
-								<div className="flex gap-2">
-									<button
-										onClick={downloadFromOverpass}
-										disabled={overpassLoading || isTooLarge || isLocked}
-										className="flex-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-50"
-									>
-										{overpassLoading ? (
-											<span className="flex items-center justify-center gap-1">
-												<Loader2 className="h-3 w-3 animate-spin" />
-												Loading...
+								<>
+									<div className={`rounded-md p-2 ${isTooLarge ? "bg-red-500/10" : isLargeArea ? "bg-amber-500/10" : "bg-green-500/10"}`}>
+										<div className={`flex items-center gap-1.5 ${isTooLarge ? "text-red-400" : isLargeArea ? "text-amber-400" : "text-green-400"}`}>
+											{isTooLarge ? <X className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5" />}
+											<span className="text-[10px] font-medium">
+												{isTooLarge ? "Area too large" : isLargeArea ? "Large area — may be slow" : "Area selected"}
 											</span>
-										) : downloadSuccess ? (
-											<span className="flex items-center justify-center gap-1">
-												<Check className="h-3 w-3" />
-												Loaded!
-											</span>
-										) : isLocked ? (
-											"File already loaded"
-										) : isTooLarge ? (
-											"Area Too Large"
-										) : (
-											"Download & Load"
-										)}
-									</button>
-									<button
-										onClick={cancelDrawing}
-										disabled={overpassLoading}
-										className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
-									>
-										Redraw
-									</button>
-								</div>
+										</div>
+										<div className="mt-1 text-[10px] text-zinc-400 font-mono">
+											{formatBbox(drawnBbox)}
+										</div>
+										<div className={`text-[9px] mt-0.5 ${isTooLarge ? "text-red-400" : isLargeArea ? "text-amber-400/70" : "text-zinc-500"}`}>
+											~{areaKm2.toFixed(1)} km²
+											{isLargeArea && !isTooLarge && " · dense cities may take longer"}
+											{isTooLarge && ` · max ${MAX_AREA_KM2} km²`}
+										</div>
+									</div>
+
+									<div className="flex gap-2">
+										<button
+											onClick={downloadFromOverpass}
+											disabled={overpassLoading || isTooLarge || isLocked}
+											className="flex-1 rounded-md bg-green-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-500 disabled:opacity-50"
+										>
+											{downloadSuccess ? (
+												<span className="flex items-center justify-center gap-1">
+													<Check className="h-3 w-3" />
+													Loaded!
+												</span>
+											) : isLocked ? (
+												"File already loaded"
+											) : isTooLarge ? (
+												"Area Too Large"
+											) : (
+												"Download & Load"
+											)}
+										</button>
+										<button
+											onClick={cancelDrawing}
+											disabled={overpassLoading}
+											className="rounded-md bg-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-600 disabled:opacity-50"
+										>
+											Redraw
+										</button>
+									</div>
+								</>
 							)
 						})()}
 					</div>
@@ -497,8 +618,11 @@ out geom;`
 				<div className="flex flex-col gap-2 rounded-lg bg-zinc-800 p-3">
 					<div className="flex items-center gap-2">
 						<FileText className="h-4 w-4 text-zinc-400" />
-						<span className="text-sm font-medium text-zinc-200 truncate">
+						<span className="text-sm font-medium text-zinc-200 truncate flex-1">
 							{dataset.fileName}
+						</span>
+						<span className="shrink-0 rounded bg-zinc-700 px-1.5 py-0.5 text-[9px] font-mono font-medium text-zinc-400 uppercase">
+							{dataset.format ?? "pbf"}
 						</span>
 					</div>
 					<div className="grid grid-cols-2 gap-2 text-xs text-zinc-400">

@@ -179,6 +179,10 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 	const speedVisible = useUIStore((s) => s.layers.speed)
 	const dataset = useOsmStore((s) => s.dataset)
 	const highlightedWayIds = useOsmStore((s) => s.highlightedWayIds)
+
+	// OSM-native formats get full highway classification styling;
+	// other formats (gpx, kml, shp, etc.) get a generic neutral style
+	const isOsmFormat = !dataset?.format || dataset.format === "pbf" || dataset.format === "osm"
 	const speedLoaded = useSpeedStore((s) => s.isLoaded)
 	const speedStats = useSpeedStore((s) => s.stats)
 	const speedData = useSpeedStore((s) => s.speedData)
@@ -201,6 +205,15 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 
 	// Dynamic road color
 	const roadColor = useMemo(() => {
+		if (!isOsmFormat) {
+			// Generic neutral color for non-OSM formats
+			return [
+				"case",
+				["boolean", ["feature-state", "highlighted"], false],
+				"#F59E0B",
+				"#64748B",
+			] as unknown as maplibregl.ExpressionSpecification
+		}
 		if (colorBySpeed && speedStats) {
 			return [
 				"case",
@@ -217,7 +230,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 			] as unknown as maplibregl.ExpressionSpecification
 		}
 		return roadColorExpression
-	}, [colorBySpeed, speedStats])
+	}, [isOsmFormat, colorBySpeed, speedStats])
 
 	const opacity = roadsVisible ? 1 : 0
 
@@ -317,156 +330,163 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				type: "line",
 				source: sourceId,
 				"source-layer": waysSL,
-				filter: solidFilter,
+				filter: isOsmFormat ? solidFilter : wayLinesFilter,
 				minzoom: vectorMinZoom,
 				layout: { "line-join": "round", "line-cap": "round" },
 				paint: {
-					"line-color": roadColorExpression as any,
-					"line-width": roadWidthExpression as any,
+					"line-color": roadColor as any,
+					"line-width": isOsmFormat ? (roadWidthExpression as any) : 2,
 					"line-opacity": 1,
 				},
 			})
 
-			// === DASHED road fill ===
-			map.addLayer({
-				id: `osmviz:${osmId}:ways-dashed`,
-				type: "line",
-				source: sourceId,
-				"source-layer": waysSL,
-				filter: dashedFilter,
-				minzoom: vectorMinZoom,
-				layout: { "line-join": "round", "line-cap": "butt" },
-				paint: {
-					"line-color": roadColorExpression as any,
-					"line-width": roadWidthExpression as any,
-					"line-dasharray": [4, 3],
-					"line-opacity": 1,
-				},
-			})
+			// === DASHED road fill (OSM-only) ===
+			if (isOsmFormat) {
+				map.addLayer({
+					id: `osmviz:${osmId}:ways-dashed`,
+					type: "line",
+					source: sourceId,
+					"source-layer": waysSL,
+					filter: dashedFilter,
+					minzoom: vectorMinZoom,
+					layout: { "line-join": "round", "line-cap": "butt" },
+					paint: {
+						"line-color": roadColorExpression as any,
+						"line-width": roadWidthExpression as any,
+						"line-dasharray": [4, 3],
+						"line-opacity": 1,
+					},
+				})
+			}
 
-			// === WAY DIRECTION ARROWS ===
-			map.addLayer({
-				id: `osmviz:${osmId}:way-direction`,
-				type: "symbol",
-				source: sourceId,
-				"source-layer": waysSL,
-				filter: notOnewayFilter,
-				minzoom: 16,
-				layout: {
-					"symbol-placement": "line",
-					"symbol-spacing": 80,
-					"icon-image": "oneway-arrow",
-					"icon-size": ["interpolate", ["linear"], ["zoom"], 16, 0.5, 18, 0.65],
-					"icon-rotation-alignment": "map",
-					"icon-keep-upright": false,
-					"icon-allow-overlap": true,
-					"icon-ignore-placement": true,
-				} as SymbolLayerSpecification["layout"],
-				paint: {
-					"icon-color": "#888888",
-					"icon-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0, 17, 0.2, 20, 0.3] as any,
-				},
-			})
+			// === ONEWAY/DIRECTION ARROWS (OSM-only) ===
+			if (isOsmFormat) {
+				// === WAY DIRECTION ARROWS ===
+				map.addLayer({
+					id: `osmviz:${osmId}:way-direction`,
+					type: "symbol",
+					source: sourceId,
+					"source-layer": waysSL,
+					filter: notOnewayFilter,
+					minzoom: 16,
+					layout: {
+						"symbol-placement": "line",
+						"symbol-spacing": 80,
+						"icon-image": "oneway-arrow",
+						"icon-size": ["interpolate", ["linear"], ["zoom"], 16, 0.5, 18, 0.65],
+						"icon-rotation-alignment": "map",
+						"icon-keep-upright": false,
+						"icon-allow-overlap": true,
+						"icon-ignore-placement": true,
+					} as SymbolLayerSpecification["layout"],
+					paint: {
+						"icon-color": "#888888",
+						"icon-opacity": ["interpolate", ["linear"], ["zoom"], 16, 0, 17, 0.2, 20, 0.3] as any,
+					},
+				})
+	
+				// === ONEWAY ARROW CASING ===
+				map.addLayer({
+					id: `osmviz:${osmId}:oneway-casing`,
+					type: "symbol",
+					source: sourceId,
+					"source-layer": waysSL,
+					filter: onewayForwardFilter,
+					minzoom: 13,
+					layout: {
+						"symbol-placement": "line",
+						"symbol-spacing": 75,
+						"icon-image": "oneway-arrow",
+						"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.65, 15, 0.85, 18, 1.05],
+						"icon-rotation-alignment": "map",
+						"icon-keep-upright": false,
+						"icon-allow-overlap": true,
+						"icon-ignore-placement": true,
+					} as SymbolLayerSpecification["layout"],
+					paint: {
+						"icon-color": "#333333",
+						"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.35, 18, 0.4] as any,
+					},
+				})
+	
+				// === ONEWAY ARROWS FORWARD ===
+				map.addLayer({
+					id: `osmviz:${osmId}:oneway-arrows`,
+					type: "symbol",
+					source: sourceId,
+					"source-layer": waysSL,
+					filter: onewayForwardFilter,
+					minzoom: 13,
+					layout: {
+						"symbol-placement": "line",
+						"symbol-spacing": 75,
+						"icon-image": "oneway-arrow",
+						"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 15, 0.7, 18, 0.9],
+						"icon-rotation-alignment": "map",
+						"icon-keep-upright": false,
+						"icon-allow-overlap": true,
+						"icon-ignore-placement": true,
+					} as SymbolLayerSpecification["layout"],
+					paint: {
+						"icon-color": "#ffffff",
+						"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.55, 15, 0.85, 18, 0.9] as any,
+					},
+				})
+	
+				// === ONEWAY REVERSE CASING ===
+				map.addLayer({
+					id: `osmviz:${osmId}:oneway-reverse-casing`,
+					type: "symbol",
+					source: sourceId,
+					"source-layer": waysSL,
+					filter: onewayReverseFilter,
+					minzoom: 13,
+					layout: {
+						"symbol-placement": "line",
+						"symbol-spacing": 75,
+						"icon-image": "oneway-arrow",
+						"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.65, 15, 0.85, 18, 1.05],
+						"icon-rotation-alignment": "map",
+						"icon-keep-upright": false,
+						"icon-rotate": 180,
+						"icon-allow-overlap": true,
+						"icon-ignore-placement": true,
+					} as SymbolLayerSpecification["layout"],
+					paint: {
+						"icon-color": "#333333",
+						"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.35, 18, 0.4] as any,
+					},
+				})
+	
+				// === ONEWAY ARROWS REVERSE ===
+				map.addLayer({
+					id: `osmviz:${osmId}:oneway-arrows-reverse`,
+					type: "symbol",
+					source: sourceId,
+					"source-layer": waysSL,
+					filter: onewayReverseFilter,
+					minzoom: 13,
+					layout: {
+						"symbol-placement": "line",
+						"symbol-spacing": 75,
+						"icon-image": "oneway-arrow",
+						"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 15, 0.7, 18, 0.9],
+						"icon-rotation-alignment": "map",
+						"icon-keep-upright": false,
+						"icon-rotate": 180,
+						"icon-allow-overlap": true,
+						"icon-ignore-placement": true,
+					} as SymbolLayerSpecification["layout"],
+					paint: {
+						"icon-color": "#ffffff",
+						"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.55, 15, 0.85, 18, 0.9] as any,
+					},
+				})
+	
+	
+			}
 
-			// === ONEWAY ARROW CASING ===
-			map.addLayer({
-				id: `osmviz:${osmId}:oneway-casing`,
-				type: "symbol",
-				source: sourceId,
-				"source-layer": waysSL,
-				filter: onewayForwardFilter,
-				minzoom: 13,
-				layout: {
-					"symbol-placement": "line",
-					"symbol-spacing": 75,
-					"icon-image": "oneway-arrow",
-					"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.65, 15, 0.85, 18, 1.05],
-					"icon-rotation-alignment": "map",
-					"icon-keep-upright": false,
-					"icon-allow-overlap": true,
-					"icon-ignore-placement": true,
-				} as SymbolLayerSpecification["layout"],
-				paint: {
-					"icon-color": "#333333",
-					"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.35, 18, 0.4] as any,
-				},
-			})
-
-			// === ONEWAY ARROWS FORWARD ===
-			map.addLayer({
-				id: `osmviz:${osmId}:oneway-arrows`,
-				type: "symbol",
-				source: sourceId,
-				"source-layer": waysSL,
-				filter: onewayForwardFilter,
-				minzoom: 13,
-				layout: {
-					"symbol-placement": "line",
-					"symbol-spacing": 75,
-					"icon-image": "oneway-arrow",
-					"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 15, 0.7, 18, 0.9],
-					"icon-rotation-alignment": "map",
-					"icon-keep-upright": false,
-					"icon-allow-overlap": true,
-					"icon-ignore-placement": true,
-				} as SymbolLayerSpecification["layout"],
-				paint: {
-					"icon-color": "#ffffff",
-					"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.55, 15, 0.85, 18, 0.9] as any,
-				},
-			})
-
-			// === ONEWAY REVERSE CASING ===
-			map.addLayer({
-				id: `osmviz:${osmId}:oneway-reverse-casing`,
-				type: "symbol",
-				source: sourceId,
-				"source-layer": waysSL,
-				filter: onewayReverseFilter,
-				minzoom: 13,
-				layout: {
-					"symbol-placement": "line",
-					"symbol-spacing": 75,
-					"icon-image": "oneway-arrow",
-					"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.65, 15, 0.85, 18, 1.05],
-					"icon-rotation-alignment": "map",
-					"icon-keep-upright": false,
-					"icon-rotate": 180,
-					"icon-allow-overlap": true,
-					"icon-ignore-placement": true,
-				} as SymbolLayerSpecification["layout"],
-				paint: {
-					"icon-color": "#333333",
-					"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.2, 15, 0.35, 18, 0.4] as any,
-				},
-			})
-
-			// === ONEWAY ARROWS REVERSE ===
-			map.addLayer({
-				id: `osmviz:${osmId}:oneway-arrows-reverse`,
-				type: "symbol",
-				source: sourceId,
-				"source-layer": waysSL,
-				filter: onewayReverseFilter,
-				minzoom: 13,
-				layout: {
-					"symbol-placement": "line",
-					"symbol-spacing": 75,
-					"icon-image": "oneway-arrow",
-					"icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 15, 0.7, 18, 0.9],
-					"icon-rotation-alignment": "map",
-					"icon-keep-upright": false,
-					"icon-rotate": 180,
-					"icon-allow-overlap": true,
-					"icon-ignore-placement": true,
-				} as SymbolLayerSpecification["layout"],
-				paint: {
-					"icon-color": "#ffffff",
-					"icon-opacity": ["interpolate", ["linear"], ["zoom"], 13, 0.55, 15, 0.85, 18, 0.9] as any,
-				},
-			})
-
-			// === ROAD LABELS ===
+						// === ROAD LABELS ===
 			map.addLayer({
 				id: `osmviz:${osmId}:road-labels`,
 				type: "symbol",
@@ -499,89 +519,94 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				},
 			})
 
-			// === NODE BACKGROUND CIRCLES ===
-			map.addLayer({
-				id: `osmviz:${osmId}:node-bg`,
-				type: "circle",
-				source: sourceId,
-				"source-layer": nodesSL,
-				filter: iconNodeFilter,
-				minzoom: 14,
-				paint: {
-					"circle-color": [
-						"match",
-						["get", "highway"],
-						"traffic_signals", "#e8a838",
-						"bus_stop", "#4a90e2",
-						"stop", "#e03030",
-						"give_way", "#e07020",
-						"crossing", "#6a8fa0",
-						[
+			// === OSM NODES (OSM-only) ===
+			if (isOsmFormat) {
+				// === NODE BACKGROUND CIRCLES ===
+				map.addLayer({
+					id: `osmviz:${osmId}:node-bg`,
+					type: "circle",
+					source: sourceId,
+					"source-layer": nodesSL,
+					filter: iconNodeFilter,
+					minzoom: 14,
+					paint: {
+						"circle-color": [
+							"match",
+							["get", "highway"],
+							"traffic_signals", "#e8a838",
+							"bus_stop", "#4a90e2",
+							"stop", "#e03030",
+							"give_way", "#e07020",
+							"crossing", "#6a8fa0",
+							[
+								"case",
+								["has", "barrier"], "#888888",
+								["has", "traffic_calming"], "#ff9900",
+								"#555555",
+							],
+						] as unknown as maplibregl.ExpressionSpecification,
+						"circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 9, 18, 12],
+						"circle-stroke-color": "#ffffff",
+						"circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 14, 1, 16, 1.5, 18, 2],
+						"circle-opacity": 1,
+						"circle-stroke-opacity": 1,
+					},
+				})
+	
+				// === NODE ICONS ===
+				map.addLayer({
+					id: `osmviz:${osmId}:node-icons`,
+					type: "symbol",
+					source: sourceId,
+					"source-layer": nodesSL,
+					filter: iconNodeFilter,
+					minzoom: 14,
+					layout: {
+						"icon-image": [
 							"case",
-							["has", "barrier"], "#888888",
-							["has", "traffic_calming"], "#ff9900",
-							"#555555",
-						],
-					] as unknown as maplibregl.ExpressionSpecification,
-					"circle-radius": ["interpolate", ["linear"], ["zoom"], 14, 5, 16, 9, 18, 12],
-					"circle-stroke-color": "#ffffff",
-					"circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 14, 1, 16, 1.5, 18, 2],
-					"circle-opacity": 1,
-					"circle-stroke-opacity": 1,
-				},
-			})
+							["==", ["get", "highway"], "traffic_signals"], nodeIconId("traffic_signals"),
+							["==", ["get", "highway"], "bus_stop"], nodeIconId("bus_stop"),
+							["==", ["get", "highway"], "stop"], nodeIconId("stop"),
+							["==", ["get", "highway"], "give_way"], nodeIconId("give_way"),
+							["==", ["get", "highway"], "crossing"], nodeIconId("crossing"),
+							["==", ["get", "barrier"], "gate"], nodeIconId("gate"),
+							["==", ["get", "barrier"], "bollard"], nodeIconId("bollard"),
+							["==", ["get", "barrier"], "lift_gate"], nodeIconId("lift_gate"),
+							["has", "traffic_calming"], nodeIconId("speed_bump"),
+							"",
+						] as unknown as maplibregl.ExpressionSpecification,
+						"icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 16, 0.55, 18, 0.75],
+						"icon-allow-overlap": true,
+						"icon-ignore-placement": true,
+					} as unknown as SymbolLayerSpecification["layout"],
+					paint: {
+						"icon-color": "#ffffff",
+						"icon-opacity": 1,
+					},
+				})
+	
+				// === PLAIN NODES ===
+				map.addLayer({
+					id: `osmviz:${osmId}:nodes-plain`,
+					type: "circle",
+					source: sourceId,
+					"source-layer": nodesSL,
+					filter: plainNodeFilter,
+					minzoom: 15,
+					paint: {
+						"circle-color": "#cccccc",
+						"circle-radius": ["interpolate", ["linear"], ["zoom"], 15, 2, 18, 4],
+						"circle-stroke-color": "#ffffff",
+						"circle-stroke-width": 1,
+						"circle-opacity": 1,
+						"circle-stroke-opacity": 1,
+					},
+				})
+	
+	
+			}
 
-			// === NODE ICONS ===
-			map.addLayer({
-				id: `osmviz:${osmId}:node-icons`,
-				type: "symbol",
-				source: sourceId,
-				"source-layer": nodesSL,
-				filter: iconNodeFilter,
-				minzoom: 14,
-				layout: {
-					"icon-image": [
-						"case",
-						["==", ["get", "highway"], "traffic_signals"], nodeIconId("traffic_signals"),
-						["==", ["get", "highway"], "bus_stop"], nodeIconId("bus_stop"),
-						["==", ["get", "highway"], "stop"], nodeIconId("stop"),
-						["==", ["get", "highway"], "give_way"], nodeIconId("give_way"),
-						["==", ["get", "highway"], "crossing"], nodeIconId("crossing"),
-						["==", ["get", "barrier"], "gate"], nodeIconId("gate"),
-						["==", ["get", "barrier"], "bollard"], nodeIconId("bollard"),
-						["==", ["get", "barrier"], "lift_gate"], nodeIconId("lift_gate"),
-						["has", "traffic_calming"], nodeIconId("speed_bump"),
-						"",
-					] as unknown as maplibregl.ExpressionSpecification,
-					"icon-size": ["interpolate", ["linear"], ["zoom"], 14, 0.35, 16, 0.55, 18, 0.75],
-					"icon-allow-overlap": true,
-					"icon-ignore-placement": true,
-				} as unknown as SymbolLayerSpecification["layout"],
-				paint: {
-					"icon-color": "#ffffff",
-					"icon-opacity": 1,
-				},
-			})
-
-			// === PLAIN NODES ===
-			map.addLayer({
-				id: `osmviz:${osmId}:nodes-plain`,
-				type: "circle",
-				source: sourceId,
-				"source-layer": nodesSL,
-				filter: plainNodeFilter,
-				minzoom: 15,
-				paint: {
-					"circle-color": "#cccccc",
-					"circle-radius": ["interpolate", ["linear"], ["zoom"], 15, 2, 18, 4],
-					"circle-stroke-color": "#ffffff",
-					"circle-stroke-width": 1,
-					"circle-opacity": 1,
-					"circle-stroke-opacity": 1,
-				},
-			})
-
-			createdRef.current = true
+						createdRef.current = true
 			console.log(`[RoadLayer] All layers created for ${osmId}`)
 			
 			// Debug: Check if source exists after creation
@@ -636,8 +661,8 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 			try { if (map.getSource(sourceId)) map.removeSource(sourceId) } catch { /* */ }
 			createdRef.current = false
 		}
-	// Re-run when osmId, map, or vectorMinZoom changes
-	}, [mapInstance, osmId, sourceId, sourceLayerPrefix, bounds, registerImages, vectorMinZoom])
+	// Re-run when osmId, map, vectorMinZoom, or format changes
+	}, [mapInstance, osmId, sourceId, sourceLayerPrefix, bounds, registerImages, vectorMinZoom, isOsmFormat, roadColor])
 
 	// ── REACTIVE EFFECT: update paint properties without recreating layers ──
 	useEffect(() => {
@@ -647,8 +672,8 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 		try {
 			// Road visibility
 			if (map.getLayer(`osmviz:${osmId}:casing`)) {
-				map.setPaintProperty(`osmviz:${osmId}:casing`, "line-color",
-					colorBySpeed ? "rgba(0,0,0,0.3)" : (roadCasingColorExpression as any))
+				const casingColor = !isOsmFormat ? "rgba(0,0,0,0.4)" : colorBySpeed ? "rgba(0,0,0,0.3)" : (roadCasingColorExpression as any)
+				map.setPaintProperty(`osmviz:${osmId}:casing`, "line-color", casingColor)
 				map.setPaintProperty(`osmviz:${osmId}:casing`, "line-opacity", opacity * 0.8)
 			}
 			if (map.getLayer(`osmviz:${osmId}:ways`)) {
@@ -676,7 +701,7 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 				map.setPaintProperty(`osmviz:${osmId}:nodes-plain`, "circle-stroke-opacity", nodesVisible ? 1 : 0)
 			}
 		} catch { /* layers may not exist yet */ }
-	}, [mapInstance, osmId, roadColor, colorBySpeed, opacity, nodesVisible])
+	}, [mapInstance, osmId, roadColor, colorBySpeed, opacity, nodesVisible, isOsmFormat])
 
 	// ── SPEED COLORING via feature state ──
 	useEffect(() => {

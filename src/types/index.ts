@@ -1,4 +1,7 @@
 import type { OsmInfo } from "@osmix/core"
+import type { FileFormat } from "../lib/format-converter"
+
+export type { FileFormat }
 
 export interface SelectedEntity {
 	id: number
@@ -13,6 +16,7 @@ export interface OsmDataset {
 	osmId: string
 	info: OsmInfo
 	fileName: string
+	format: FileFormat
 }
 
 export interface SpeedRecord {

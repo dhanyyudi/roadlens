@@ -1,6 +1,6 @@
 import { OsmChangeset, applyChangesetToOsm } from "@osmix/change"
 import { expose, transfer } from "comlink"
-import { OsmixWorker } from "osmix"
+import { Osm, toPbfBuffer, OsmixWorker } from "osmix"
 import {
 	executeStreamingQuery,
 	executeCountQuery,
@@ -537,6 +537,39 @@ export class VizWorker extends OsmixWorker {
 	 */
 	parseQuery(query: string): QueryFilter {
 		return parseNaturalLanguageQuery(query)
+	}
+
+	/**
+	 * Export a roads-only PBF from the loaded dataset.
+	 * Filters to ways with highway=* tags and their referenced nodes only.
+	 * Returns a Uint8Array of PBF bytes ready for download.
+	 */
+	async exportRoadsPbf(osmId: string): Promise<Uint8Array> {
+		const source = this.get(osmId)
+
+		// Collect all highway ways
+		const highwayWays = source.ways.search("highway")
+		if (highwayWays.length === 0) return new Uint8Array(0)
+
+		// Collect unique node IDs referenced by those ways
+		const nodeIds = new Set<number>()
+		for (const way of highwayWays) {
+			for (const ref of way.refs) nodeIds.add(ref)
+		}
+
+		// Build a new minimal Osm with only roads + their nodes
+		const filtered = new Osm({ id: `${osmId}:roads`, header: source.header })
+		for (const nodeId of nodeIds) {
+			const node = source.nodes.getById(nodeId)
+			if (node) filtered.nodes.addNode(node)
+		}
+		for (const way of highwayWays) {
+			filtered.ways.addWay(way)
+		}
+		filtered.buildIndexes()
+
+		const pbfBytes = await toPbfBuffer(filtered)
+		return transfer(pbfBytes, [pbfBytes.buffer]) as unknown as Uint8Array
 	}
 }
 

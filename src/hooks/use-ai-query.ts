@@ -190,7 +190,16 @@ export function useAIQuery(): UseAIQueryReturn {
 						error: 'No OSM data loaded',
 					}
 				}
-				
+
+				const datasetFormat = useOsmStore.getState().dataset?.format
+				if (datasetFormat && datasetFormat !== 'pbf' && datasetFormat !== 'osm') {
+					return {
+						rowCount: 0,
+						executionTime: 0,
+						error: 'AI queries are only available for OSM data (.pbf or .osm). This dataset uses ' + datasetFormat.toUpperCase() + ' format.',
+					}
+				}
+
 				// Use provided filter or parse from SQL
 				const queryFilter = filter || await worker.parseQuery(sql)
 				

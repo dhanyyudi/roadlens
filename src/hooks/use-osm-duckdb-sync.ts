@@ -30,6 +30,13 @@ export function useOsmDuckDBSync() {
 			return
 		}
 
+		// DuckDB sync is OSM-only (requires highway tags for schema)
+		if (dataset.format && dataset.format !== "pbf" && dataset.format !== "osm") {
+			setIsSynced(false)
+			setProgress(0)
+			return
+		}
+
 		setIsSyncing(true)
 		setError(null)
 		setProgress(0)
