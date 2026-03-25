@@ -23,29 +23,26 @@ try {
   PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT;
 }
 
-// Schema context for prompt
+// Schema context for prompt — must match CREATE TABLE in use-osm-duckdb-sync.ts exactly
 const SCHEMA_CONTEXT = `
 DATABASE SCHEMA:
 
 Table: roads
-- id (INTEGER): Unique road identifier
-- name (TEXT): Road name (may be NULL)
-- highway (TEXT): Road type: motorway, trunk, primary, secondary, tertiary, residential, service, unclassified, track, path, footway, cycleway
-- geometry (BLOB): Line geometry
-- length_meters (DOUBLE): Road length in meters
-- tags (JSON): Additional OSM tags
+- id (BIGINT): Unique OSM way identifier
+- name (VARCHAR): Road name (may be NULL if unnamed)
+- highway (VARCHAR): Road type classification. Valid values:
+  'motorway', 'trunk', 'primary', 'secondary', 'tertiary',
+  'residential', 'unclassified', 'service', 'track', 'path',
+  'footway', 'cycleway', 'steps',
+  and link variants: 'motorway_link', 'trunk_link', 'primary_link', etc.
+- length_meters (DOUBLE): Road segment length in meters
+- tags (JSON): Additional OSM tags. Access with tags->>'key', e.g.:
+  tags->>'oneway' = 'yes'   -- one-way street
+  tags->>'maxspeed'         -- speed limit
+  tags->>'surface'          -- 'asphalt', 'concrete', 'unpaved', etc.
+  tags->>'lanes'            -- number of lanes
 
-Table: nodes
-- id (INTEGER): Unique node identifier
-- lat (DOUBLE): Latitude
-- lon (DOUBLE): Longitude
-- tags (JSON): OSM tags
-
-Table: intersections
-- node_id (INTEGER): Reference to nodes.id
-- road_ids (JSON): Array of connected road IDs
-
-Use tags->>'key' for JSON extraction in DuckDB.
+Only this one table exists. Do NOT reference nodes, intersections, or any other table.
 `.trim();
 
 const SYSTEM_INSTRUCTION = `
