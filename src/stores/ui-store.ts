@@ -10,6 +10,7 @@ export type SidebarTab =
 	| "layers"
 	| "export"
 	| "ai"
+	| "overlay"
 
 interface LayerVisibility {
 	roads: boolean

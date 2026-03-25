@@ -23,6 +23,7 @@ import { VectorLoadingIndicator } from "./vector-loading-indicator"
 import { MemoryMonitor } from "./memory-monitor"
 import { VectorTilesProgress } from "./vector-tiles-progress"
 import { MobileControls } from "./mobile-controls"
+import { OverlayLayer } from "./overlay-layer"
 // Protocol imports ensure they're registered at module load time
 import "../../lib/osmix-vector-protocol"
 import "../../lib/osmix-raster-protocol"
@@ -370,6 +371,7 @@ export function MapViewer({ showMobileControls = false }: { showMobileControls?:
 				<RouteLayer />
 				<SearchHighlightLayer />
 				<BBoxDrawLayer />
+				<OverlayLayer />
 				{showMobileControls && <MobileControls />}
 			</Map>
 			<CursorCoordinates />

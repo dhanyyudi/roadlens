@@ -8,6 +8,7 @@ import { SpeedPanel } from "./speed-panel"
 import { LayersPanel } from "./layers-panel"
 import { ExportPanel } from "./export-panel"
 import { AIQueryPanel } from "./ai-query-panel"
+import { OverlayPanel } from "./overlay-panel"
 import { useIsMobile } from "../../hooks/use-media-query"
 import { BottomSheet } from "../ui/bottom-sheet"
 import {
@@ -23,10 +24,12 @@ import {
 	PanelLeft,
 	Sparkles,
 	Menu,
+	MapPinPlus,
 } from "lucide-react"
 
 const MAIN_TABS: Array<{ id: SidebarTab; label: string; icon: typeof FileText }> = [
 	{ id: "file", label: "File", icon: FileText },
+	{ id: "overlay", label: "Overlay", icon: MapPinPlus },
 	{ id: "search", label: "Search", icon: Search },
 	{ id: "inspect", label: "Inspect", icon: Eye },
 	{ id: "edit", label: "Edit", icon: Edit3 },
@@ -38,6 +41,7 @@ const MAIN_TABS: Array<{ id: SidebarTab; label: string; icon: typeof FileText }>
 
 const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
 	file: FilePanel,
+	overlay: OverlayPanel,
 	search: SearchPanel,
 	inspect: InspectPanel,
 	edit: EditPanel,

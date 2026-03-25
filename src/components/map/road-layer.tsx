@@ -685,16 +685,9 @@ export function RoadLayer({ osmId }: RoadLayerProps) {
 		}
 		map.on("sourcedata", onSourceData)
 		
-		// Debug: listen for all errors
-		const onError = (e: any) => {
-			console.error(`[RoadLayer] Map error:`, e.error || e)
-		}
-		map.on("error", onError)
-
 		return () => {
 			map.off("style.load", onStyleLoad)
 			map.off("sourcedata", onSourceData)
-			map.off("error", onError)
 			// Remove on unmount
 			for (const id of allLayerIds(osmId)) {
 				try { if (map.getLayer(id)) map.removeLayer(id) } catch { /* */ }
