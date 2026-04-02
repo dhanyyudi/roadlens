@@ -7,7 +7,8 @@ import { VertexAI } from '@google-cloud/vertexai';
 // For local testing, the env var should be set in .env.local
 const SERVICE_ACCOUNT_JSON = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 
-const LOCATION = process.env.VERTEX_AI_LOCATION || 'us-central1';
+// Support both the current names and older aliases used in docs/examples.
+const LOCATION = process.env.VERTEX_AI_LOCATION || process.env.GOOGLE_LOCATION || 'us-central1';
 const MODEL_ID = process.env.VERTEX_AI_MODEL || 'gemini-2.5-flash';
 
 let SERVICE_ACCOUNT;
@@ -16,11 +17,14 @@ let PROJECT_ID;
 try {
   SERVICE_ACCOUNT = SERVICE_ACCOUNT_JSON ? JSON.parse(SERVICE_ACCOUNT_JSON) : null;
   // Extract project_id from service account JSON (most reliable)
-  PROJECT_ID = SERVICE_ACCOUNT?.project_id || process.env.GOOGLE_CLOUD_PROJECT;
+  PROJECT_ID =
+    SERVICE_ACCOUNT?.project_id ||
+    process.env.GOOGLE_CLOUD_PROJECT ||
+    process.env.GOOGLE_PROJECT_ID;
 } catch (e) {
   console.error('Failed to parse service account JSON:', e.message);
   SERVICE_ACCOUNT = null;
-  PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT;
+  PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || process.env.GOOGLE_PROJECT_ID;
 }
 
 // Schema context for prompt — must match CREATE TABLE in use-osm-duckdb-sync.ts exactly

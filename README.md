@@ -153,10 +153,13 @@ Server-side only (Vercel):
 ```
 GOOGLE_SERVICE_ACCOUNT_JSON   Vertex AI service account credentials
 GOOGLE_CLOUD_PROJECT          GCP project ID
+VERTEX_AI_LOCATION            Vertex AI region (default: us-central1)
 VERTEX_AI_MODEL               Model name (default: gemini-2.5-flash)
 ```
 
 Without these, the app uses the local NL2SQL parser — all features still work.
+
+Legacy aliases `GOOGLE_PROJECT_ID` and `GOOGLE_LOCATION` are still supported for older setups, but `GOOGLE_CLOUD_PROJECT` and `VERTEX_AI_LOCATION` are the preferred names.
 
 ---
 

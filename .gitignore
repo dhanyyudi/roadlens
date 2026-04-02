@@ -5,6 +5,7 @@ dist/
 .DS_Store
 .env
 .env.*
+!.env.example
 .vscode/
 CLAUDE.md
 public/samples/denpasar_original.osm.pbf
